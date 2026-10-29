@@ -1,0 +1,22 @@
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: claimsage-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: claimsage
+      POSTGRES_USER: claimsage_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-local-password}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - claimsage_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U claimsage_app -d claimsage"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  claimsage_postgres_data:
