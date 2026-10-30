@@ -1,5 +1,4 @@
-﻿
-"""ClaimSage API application."""
+﻿"""ClaimSage API application."""
 
 from fastapi import FastAPI
 
@@ -7,6 +6,8 @@ from claimsage.api.routes.agent import router as agent_router
 from claimsage.api.routes.auth import router as auth_router
 from claimsage.api.routes.claims import router as claims_router
 from claimsage.api.routes.policies import router as policies_router
+from claimsage.core.config import get_settings
+from claimsage.core.upload_limits import UploadSizeLimitMiddleware
 
 app = FastAPI(
     title="ClaimSage API",
@@ -27,3 +28,10 @@ def liveness_check() -> dict[str, str]:
         "status": "ok",
         "service": "claimsage-api",
     }
+
+
+# Enforce upload size before FastAPI parses multipart bodies.
+app = UploadSizeLimitMiddleware(
+    app,
+    max_body_bytes=get_settings().upload_max_request_bytes,
+)

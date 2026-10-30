@@ -60,6 +60,26 @@ def test_authorized_claim_returns_structured_investigation(
         policy_retrieval,
     )
 
+    # Keep graph tests independent of the live Groq API.
+    policy_analysis = MagicMock()
+    policy_analysis.model_dump.return_value = {
+        "summary": "Synthetic policy analysis.",
+        "relevant_clauses": [],
+        "coverage_indicators": [],
+        "exclusions_and_conditions": [],
+        "missing_information": [],
+        "evidence_gaps": [],
+        "overall_assessment": "potentially_supportive",
+        "human_review_required": True,
+    }
+
+    analyst = MagicMock(return_value=policy_analysis)
+    monkeypatch.setattr(
+        graph_module,
+        "analyze_policy",
+        analyst,
+    )
+
     output = run_investigation(
         session=session,
         employee_id=employee_id,

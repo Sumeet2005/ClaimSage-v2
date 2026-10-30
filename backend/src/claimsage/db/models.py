@@ -1,5 +1,4 @@
-
-"""Initial ClaimSage database models."""
+﻿"""ClaimSage database models."""
 
 import uuid
 from datetime import datetime
@@ -10,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     String,
@@ -218,6 +218,15 @@ class PolicyChunk(Base):
             "length(text) > 0",
             name="ck_policy_chunks_text_nonempty",
         ),
+        CheckConstraint(
+            "extraction_method IN ('native', 'ocr')",
+            name="ck_policy_chunks_extraction_method_valid",
+        ),
+        CheckConstraint(
+            "ocr_confidence IS NULL OR "
+            "(ocr_confidence >= 0 AND ocr_confidence <= 100)",
+            name="ck_policy_chunks_ocr_confidence_valid",
+        ),
         Index("ix_policy_chunks_document_id", "document_id"),
     )
 
@@ -239,6 +248,18 @@ class PolicyChunk(Base):
         nullable=False,
     )
     text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Extraction provenance.
+    extraction_method: Mapped[str] = mapped_column(
+        String(20),
+        default="native",
+        server_default="native",
+        nullable=False,
+    )
+    ocr_confidence: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
 
     # Nullable so existing chunks remain valid until embeddings are generated.
     embedding: Mapped[list[float] | None] = mapped_column(
@@ -263,6 +284,7 @@ class PolicyChunk(Base):
     document: Mapped[PolicyDocument] = relationship(
         back_populates="chunks",
     )
+
 
 class PolicyDocumentAccess(Base):
     """Explicit team-level or claim-level access to a policy document."""
@@ -333,4 +355,201 @@ class PolicyDocumentAccess(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
+    )
+
+class ClaimEvidenceDocument(Base):
+    """Evidence document uploaded for a specific insurance claim."""
+
+    __tablename__ = "claim_evidence_documents"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "claim_id",
+            "checksum_sha256",
+            name="uq_claim_evidence_document_claim_checksum",
+        ),
+        CheckConstraint(
+            "file_size_bytes > 0",
+            name="ck_claim_evidence_documents_file_size_positive",
+        ),
+        CheckConstraint(
+            "status IN ('uploaded', 'processing', 'processed', 'failed')",
+            name="ck_claim_evidence_documents_status_valid",
+        ),
+        Index(
+            "ix_claim_evidence_documents_claim_id",
+            "claim_id",
+        ),
+        Index(
+            "ix_claim_evidence_documents_created_at",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    claim_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("claims.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    filename: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    checksum_sha256: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+
+    mime_type: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    file_size_bytes: Mapped[int] = mapped_column(
+        nullable=False,
+    )
+
+    uploaded_by_employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("employees.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(30),
+        default="uploaded",
+        server_default="uploaded",
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    claim: Mapped[Claim] = relationship()
+    uploaded_by: Mapped[Employee] = relationship()
+
+    chunks: Mapped[list["ClaimEvidenceChunk"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class ClaimEvidenceChunk(Base):
+    """Page-aware extracted text and embedding for claim evidence."""
+
+    __tablename__ = "claim_evidence_chunks"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "page_number",
+            "chunk_index",
+            name="uq_claim_evidence_chunks_document_page_index",
+        ),
+        CheckConstraint(
+            "page_number > 0",
+            name="ck_claim_evidence_chunks_page_number_positive",
+        ),
+        CheckConstraint(
+            "chunk_index >= 0",
+            name="ck_claim_evidence_chunks_index_nonnegative",
+        ),
+        CheckConstraint(
+            "length(text) > 0",
+            name="ck_claim_evidence_chunks_text_nonempty",
+        ),
+        CheckConstraint(
+            "extraction_method IN ('native', 'ocr')",
+            name="ck_claim_evidence_chunks_extraction_method_valid",
+        ),
+        CheckConstraint(
+            "ocr_confidence IS NULL OR "
+            "(ocr_confidence >= 0 AND ocr_confidence <= 100)",
+            name="ck_claim_evidence_chunks_ocr_confidence_valid",
+        ),
+        Index(
+            "ix_claim_evidence_chunks_document_id",
+            "document_id",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("claim_evidence_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    page_number: Mapped[int] = mapped_column(nullable=False)
+    chunk_index: Mapped[int] = mapped_column(nullable=False)
+
+    chunk_id: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+
+    text: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    extraction_method: Mapped[str] = mapped_column(
+        String(20),
+        default="native",
+        server_default="native",
+        nullable=False,
+    )
+
+    ocr_confidence: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(384),
+        nullable=True,
+    )
+
+    embedding_model: Mapped[str | None] = mapped_column(
+        String(150),
+        nullable=True,
+    )
+
+    embedded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    document: Mapped[ClaimEvidenceDocument] = relationship(
+        back_populates="chunks",
     )

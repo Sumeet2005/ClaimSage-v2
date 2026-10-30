@@ -1,4 +1,4 @@
-﻿"""Validated application configuration."""
+"""Validated application configuration."""
 
 from functools import lru_cache
 from pathlib import Path
@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     app_name: str = "ClaimSage"
     app_env: str = "development"
 
+    # LLM provider configuration.
+    groq_api_key: SecretStr | None = Field(default=None, repr=False)
+    groq_model: str = "openai/gpt-oss-120b"
+    llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+
     database_url: str = Field(
         default=(
             "postgresql+psycopg://claimsage_app:"
@@ -36,6 +41,24 @@ class Settings(BaseSettings):
     )
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
+
+    # Upload request limits.
+    upload_max_request_bytes: int = Field(
+        default=22 * 1024 * 1024,
+        ge=1048576,
+        le=52428800,
+    )
+
+    # PDF processing limits.
+    pdf_max_pages: int = Field(default=100, ge=1, le=500)
+
+    # Document OCR configuration.
+    ocr_enabled: bool = True
+    tesseract_cmd: str | None = Field(default=None, repr=False)
+    ocr_language: str = Field(default="eng", min_length=1, max_length=32)
+    ocr_dpi: int = Field(default=200, ge=100, le=400)
+    ocr_max_pages: int = Field(default=100, ge=1, le=500)
+    ocr_timeout_seconds: int = Field(default=30, ge=1, le=300)
 
 
 @lru_cache

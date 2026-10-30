@@ -1,3 +1,4 @@
+﻿"""Persist policy documents and extracted chunks."""
 
 from pathlib import Path
 from uuid import UUID
@@ -24,8 +25,7 @@ def persist_policy_document(
     uploader_employee_id: UUID,
     filename: str | None = None,
 ) -> PolicyDocument:
-    """
-    Extract and persist a policy PDF and its text chunks.
+    """Extract and persist a policy PDF and its text chunks.
 
     The caller owns the outer database transaction and is responsible
     for committing or rolling it back.
@@ -33,6 +33,7 @@ def persist_policy_document(
     A nested transaction protects document metadata and chunks from
     partial persistence if an insert fails.
     """
+
     path = Path(file_path)
 
     if not path.is_file():
@@ -43,7 +44,7 @@ def persist_policy_document(
     if file_size <= 0:
         raise DocumentPersistenceError("The PDF file is empty.")
 
-    # Reuse the existing secure PDF extraction and chunking pipeline.
+    # Extract native text first and use OCR for scanned pages.
     pages = extract_pdf_pages(path)
 
     if not pages:
@@ -106,6 +107,8 @@ def persist_policy_document(
                         chunk_index=chunk.chunk_index,
                         chunk_id=chunk.chunk_id,
                         text=chunk.text,
+                        extraction_method=chunk.extraction_method,
+                        ocr_confidence=chunk.ocr_confidence,
                     )
                 )
 

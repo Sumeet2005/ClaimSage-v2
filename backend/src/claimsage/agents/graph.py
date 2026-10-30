@@ -7,6 +7,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 from sqlalchemy.orm import Session
 
+from claimsage.agents.policy_analyst import (
+    PolicyAnalystError,
+    analyze_policy,
+)
 from claimsage.agents.state import InvestigationState
 from claimsage.rag.retrieval_service import (
     PolicyRetrievalError,
@@ -35,6 +39,8 @@ def investigate(
         return {
             "claim_facts": None,
             "policy_evidence": [],
+            "policy_analysis": None,
+            "ai_analysis_status": None,
             "result": None,
             "error": "An investigation task is required.",
         }
@@ -53,6 +59,8 @@ def investigate(
         return {
             "claim_facts": None,
             "policy_evidence": [],
+            "policy_analysis": None,
+            "ai_analysis_status": None,
             "result": None,
             "error": "Claim not found or access denied.",
         }
@@ -119,6 +127,8 @@ def investigate(
         return {
             "claim_facts": facts,
             "policy_evidence": policy_evidence,
+            "policy_analysis": None,
+            "ai_analysis_status": "pending",
             "result": result,
             "error": None,
         }
@@ -127,6 +137,8 @@ def investigate(
         return {
             "claim_facts": None,
             "policy_evidence": [],
+            "policy_analysis": None,
+            "ai_analysis_status": None,
             "result": None,
             "error": "Claim not found or access denied.",
         }
@@ -135,6 +147,8 @@ def investigate(
         return {
             "claim_facts": None,
             "policy_evidence": [],
+            "policy_analysis": None,
+            "ai_analysis_status": None,
             "result": None,
             "error": "Policy document access denied.",
         }
@@ -143,8 +157,59 @@ def investigate(
         return {
             "claim_facts": facts,
             "policy_evidence": [],
+            "policy_analysis": None,
+            "ai_analysis_status": None,
             "result": None,
             "error": "Policy evidence retrieval is temporarily unavailable.",
+        }
+
+
+def run_policy_analyst(
+    state: InvestigationState,
+) -> dict[str, object]:
+    """Run the Policy Analyst on retrieved evidence."""
+
+    if state["result"] is None:
+        return {}
+
+    try:
+        analysis = analyze_policy(
+            task=state["task"],
+            policy_evidence=state["policy_evidence"],
+        )
+
+        analysis_data = analysis.model_dump(mode="json")
+
+        updated_result = {
+            **state["result"],
+            "policy_analysis": analysis_data,
+            "ai_analysis_status": "completed",
+        }
+
+        return {
+            "policy_analysis": analysis_data,
+            "ai_analysis_status": "completed",
+            "result": updated_result,
+        }
+
+    except PolicyAnalystError:
+        limitations = list(state["result"].get("limitations", []))
+        limitations.append(
+            "AI policy analysis is temporarily unavailable. "
+            "Retrieved policy evidence is retained for manual review."
+        )
+
+        updated_result = {
+            **state["result"],
+            "policy_analysis": None,
+            "ai_analysis_status": "unavailable",
+            "limitations": limitations,
+        }
+
+        return {
+            "policy_analysis": None,
+            "ai_analysis_status": "unavailable",
+            "result": updated_result,
         }
 
 
@@ -155,9 +220,13 @@ def build_investigation_graph():
         InvestigationState,
         context_schema=InvestigationContext,
     )
+
     builder.add_node("investigate", investigate)
+    builder.add_node("policy_analyst", run_policy_analyst)
+
     builder.add_edge(START, "investigate")
-    builder.add_edge("investigate", END)
+    builder.add_edge("investigate", "policy_analyst")
+    builder.add_edge("policy_analyst", END)
 
     return builder.compile()
 
@@ -177,6 +246,8 @@ def run_investigation(
         "task": task,
         "claim_facts": None,
         "policy_evidence": [],
+        "policy_analysis": None,
+        "ai_analysis_status": None,
         "result": None,
         "error": None,
     }

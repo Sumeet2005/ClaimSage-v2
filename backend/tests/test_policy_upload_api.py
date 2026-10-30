@@ -1,4 +1,4 @@
-
+﻿
 """Integration tests for authenticated policy document uploads."""
 
 from collections.abc import Generator
@@ -278,3 +278,62 @@ def test_policy_upload_successfully_persists_document_and_audit_event(
 
         assert audit_event is not None
         assert audit_event.actor_employee_id == upload_employee["id"]
+
+
+
+def test_policy_upload_rejects_oversized_content_length(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject oversized requests before multipart parsing or authentication."""
+
+    from claimsage.main import app
+
+    monkeypatch.setattr(app, "max_body_bytes", 100)
+
+    response = client.post(
+        UPLOAD_URL,
+        headers={"Content-Length": "101"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == (
+        "Upload request exceeds the configured size limit."
+    )
+
+
+def test_policy_upload_rejects_oversized_streamed_body(
+    client: TestClient,
+    upload_employee: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject oversized authenticated multipart uploads without Content-Length."""
+
+    from claimsage.main import app
+
+    monkeypatch.setattr(app, "max_body_bytes", 100)
+
+    boundary = "claimsage-test-boundary"
+    multipart_body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="policy.pdf"\r\n'
+        "Content-Type: application/pdf\r\n\r\n"
+    ).encode() + (b"A" * 200) + f"\r\n--{boundary}--\r\n".encode()
+
+    def oversized_body():
+        yield multipart_body[:80]
+        yield multipart_body[80:]
+
+    headers = authorization_headers(client, upload_employee["email"])
+    headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+
+    response = client.post(
+        UPLOAD_URL,
+        content=oversized_body(),
+        headers=headers,
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == (
+        "Upload request exceeds the configured size limit."
+    )

@@ -1,5 +1,4 @@
-
-from uuid import uuid4
+﻿from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -45,13 +44,17 @@ def mock_extraction(monkeypatch):
             source_name="sample-policy.pdf",
             document_sha256=checksum,
             page_number=1,
-            text="Synthetic policy text on page one.",
+            text="Synthetic native policy text on page one.",
+            extraction_method="native",
+            ocr_confidence=None,
         ),
         PageText(
             source_name="sample-policy.pdf",
             document_sha256=checksum,
             page_number=2,
-            text="Synthetic policy text on page two.",
+            text="Synthetic OCR policy text on page two.",
+            extraction_method="ocr",
+            ocr_confidence=94.5,
         ),
     ]
 
@@ -62,7 +65,9 @@ def mock_extraction(monkeypatch):
             document_sha256=checksum,
             page_number=1,
             chunk_index=0,
-            text="Synthetic policy text on page one.",
+            text="Synthetic native policy text on page one.",
+            extraction_method="native",
+            ocr_confidence=None,
         ),
         DocumentChunk(
             chunk_id="chunk-two",
@@ -70,7 +75,9 @@ def mock_extraction(monkeypatch):
             document_sha256=checksum,
             page_number=2,
             chunk_index=0,
-            text="Synthetic policy text on page two.",
+            text="Synthetic OCR policy text on page two.",
+            extraction_method="ocr",
+            ocr_confidence=94.5,
         ),
     ]
 
@@ -111,6 +118,18 @@ def test_persists_document_and_chunks(
         "chunk-one",
         "chunk-two",
     }
+
+    chunks_by_page = {
+        chunk.page_number: chunk for chunk in saved_chunks
+    }
+
+    native_chunk = chunks_by_page[1]
+    assert native_chunk.extraction_method == "native"
+    assert native_chunk.ocr_confidence is None
+
+    ocr_chunk = chunks_by_page[2]
+    assert ocr_chunk.extraction_method == "ocr"
+    assert ocr_chunk.ocr_confidence == pytest.approx(94.5)
 
 
 def test_rejects_duplicate_document(
