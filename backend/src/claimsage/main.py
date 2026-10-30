@@ -1,10 +1,12 @@
-
+﻿
 """ClaimSage API application."""
 
 from fastapi import FastAPI
 
+from claimsage.api.routes.agent import router as agent_router
 from claimsage.api.routes.auth import router as auth_router
 from claimsage.api.routes.claims import router as claims_router
+from claimsage.api.routes.policies import router as policies_router
 
 app = FastAPI(
     title="ClaimSage API",
@@ -14,6 +16,8 @@ app = FastAPI(
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(claims_router, prefix="/api/v1")
+app.include_router(agent_router, prefix="/api/v1")
+app.include_router(policies_router, prefix="/api/v1")
 
 
 @app.get("/health/live", tags=["Health"])

@@ -1,10 +1,22 @@
-﻿"""Initial ClaimSage database models."""
+
+"""Initial ClaimSage database models."""
 
 import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, func
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -30,14 +42,9 @@ class Employee(Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    email: Mapped[str] = mapped_column(
-        String(320),
-        unique=True,
-        index=True,
-    )
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(200))
 
-    # Nullable so existing synthetic employee records remain compatible.
     password_hash: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
@@ -48,10 +55,7 @@ class Employee(Base):
         default=EmployeeRole.CLAIMS_ADJUSTER,
         nullable=False,
     )
-    team_id: Mapped[str | None] = mapped_column(
-        String(100),
-        nullable=True,
-    )
+    team_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -86,14 +90,8 @@ class Claim(Base):
         ForeignKey("employees.id"),
         nullable=True,
     )
-    team_id: Mapped[str | None] = mapped_column(
-        String(100),
-        nullable=True,
-    )
-    summary: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-    )
+    team_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -118,10 +116,7 @@ class AuditEvent(Base):
         ForeignKey("employees.id"),
         nullable=True,
     )
-    action: Mapped[str] = mapped_column(
-        String(100),
-        index=True,
-    )
+    action: Mapped[str] = mapped_column(String(100), index=True)
     resource_type: Mapped[str] = mapped_column(String(100))
     resource_id: Mapped[str | None] = mapped_column(
         String(100),
@@ -131,13 +126,140 @@ class AuditEvent(Base):
         String(100),
         nullable=True,
     )
-    details: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-    )
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         index=True,
         nullable=False,
+    )
+
+
+class PolicyDocument(Base):
+    """Uploaded policy document and its ingestion metadata."""
+
+    __tablename__ = "policy_documents"
+    __table_args__ = (
+        CheckConstraint(
+            "file_size_bytes > 0",
+            name="ck_policy_documents_file_size_positive",
+        ),
+        CheckConstraint(
+            "status IN ('uploaded', 'processing', 'processed', 'failed')",
+            name="ck_policy_documents_status_valid",
+        ),
+        Index("ix_policy_documents_created_at", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    checksum_sha256: Mapped[str] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=False,
+    )
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(nullable=False)
+    uploaded_by_employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("employees.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(30),
+        default="uploaded",
+        server_default="uploaded",
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    uploaded_by: Mapped[Employee] = relationship()
+    chunks: Mapped[list["PolicyChunk"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class PolicyChunk(Base):
+    """Text chunk extracted from a policy document."""
+
+    __tablename__ = "policy_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "page_number",
+            "chunk_index",
+            name="uq_policy_chunks_document_page_index",
+        ),
+        CheckConstraint(
+            "page_number > 0",
+            name="ck_policy_chunks_page_number_positive",
+        ),
+        CheckConstraint(
+            "chunk_index >= 0",
+            name="ck_policy_chunks_index_nonnegative",
+        ),
+        CheckConstraint(
+            "length(text) > 0",
+            name="ck_policy_chunks_text_nonempty",
+        ),
+        Index("ix_policy_chunks_document_id", "document_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("policy_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    page_number: Mapped[int] = mapped_column(nullable=False)
+    chunk_index: Mapped[int] = mapped_column(nullable=False)
+    chunk_id: Mapped[str] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=False,
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Nullable so existing chunks remain valid until embeddings are generated.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(384),
+        nullable=True,
+    )
+    embedding_model: Mapped[str | None] = mapped_column(
+        String(150),
+        nullable=True,
+    )
+    embedded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    document: Mapped[PolicyDocument] = relationship(
+        back_populates="chunks",
     )
