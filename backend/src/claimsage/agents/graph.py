@@ -13,6 +13,9 @@ from claimsage.rag.retrieval_service import (
     search_policy_chunks,
 )
 from claimsage.services.claim_access import ClaimAccessDeniedError
+from claimsage.services.document_access import (
+    PolicyDocumentAccessDeniedError,
+)
 from claimsage.tools.claim_tools import retrieve_authorized_claim
 
 
@@ -57,6 +60,8 @@ def investigate(
     try:
         retrieved_chunks = search_policy_chunks(
             runtime.context["session"],
+            employee_id=employee_id,
+            claim_id=claim_id,
             query=state["task"],
             top_k=5,
             min_similarity=0.20,
@@ -90,15 +95,15 @@ def investigate(
 
         limitations = [
             "Only authorized claim fields were retrieved.",
+            "Only policy documents authorized for this employee and claim were searched.",
             "Retrieved policy passages are supporting evidence, not a coverage determination.",
-            "Policy-document access authorization is not yet independently implemented.",
             "No coverage, fraud, or settlement decision was made.",
             "Human review is required before any consequential action.",
         ]
 
         if not policy_evidence:
             limitations.append(
-                "No sufficiently similar policy passages were found."
+                "No sufficiently similar policy passages were found in accessible documents."
             )
 
         result: dict[str, object] = {
@@ -116,6 +121,22 @@ def investigate(
             "policy_evidence": policy_evidence,
             "result": result,
             "error": None,
+        }
+
+    except ClaimAccessDeniedError:
+        return {
+            "claim_facts": None,
+            "policy_evidence": [],
+            "result": None,
+            "error": "Claim not found or access denied.",
+        }
+
+    except PolicyDocumentAccessDeniedError:
+        return {
+            "claim_facts": None,
+            "policy_evidence": [],
+            "result": None,
+            "error": "Policy document access denied.",
         }
 
     except PolicyRetrievalError:

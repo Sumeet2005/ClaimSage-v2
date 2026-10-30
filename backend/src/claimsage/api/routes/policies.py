@@ -1,21 +1,34 @@
-
-"""Authenticated policy document upload endpoint."""
+"""Authenticated policy document and access-management endpoints."""
 
 import os
 import tempfile
 from pathlib import Path
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from claimsage.api.dependencies import get_current_employee
-from claimsage.db.models import AuditEvent, Employee
+from claimsage.db.models import (
+    AuditEvent,
+    Claim,
+    Employee,
+    EmployeeRole,
+    PolicyDocument,
+    PolicyDocumentAccess,
+)
 from claimsage.db.session import get_db
 from claimsage.rag.document_loader import (
     MAX_PDF_SIZE_BYTES,
     DocumentIngestionError,
 )
-from claimsage.schemas.policies import PolicyDocumentUploadResponse
+from claimsage.schemas.policies import (
+    PolicyDocumentAccessGrantRequest,
+    PolicyDocumentAccessGrantResponse,
+    PolicyDocumentUploadResponse,
+)
 from claimsage.services.document_persistence import (
     DocumentPersistenceError,
     DuplicatePolicyDocumentError,
@@ -25,6 +38,21 @@ from claimsage.services.document_persistence import (
 router = APIRouter(prefix="/policies", tags=["Policy Documents"])
 
 UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+ACCESS_MANAGEMENT_ROLES = {
+    EmployeeRole.ADMIN,
+    EmployeeRole.POLICY_SPECIALIST,
+}
+
+
+def require_access_management_permission(employee: Employee) -> None:
+    """Allow only Admins and Policy Specialists to manage document access."""
+
+    if employee.role not in ACCESS_MANAGEMENT_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to manage policy document access.",
+        )
 
 
 @router.post(
@@ -141,3 +169,172 @@ def upload_policy_document(
             temporary_path.unlink(missing_ok=True)
 
         file.file.close()
+
+
+@router.post(
+    "/documents/{document_id}/access-grants",
+    response_model=PolicyDocumentAccessGrantResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def grant_policy_document_access(
+    document_id: UUID,
+    payload: PolicyDocumentAccessGrantRequest,
+    employee: Employee = Depends(get_current_employee),
+    session: Session = Depends(get_db),
+) -> PolicyDocumentAccessGrantResponse:
+    """Grant a policy document to a team or a specific claim."""
+
+    require_access_management_permission(employee)
+
+    try:
+        document = session.scalar(
+            select(PolicyDocument).where(
+                PolicyDocument.id == document_id
+            )
+        )
+
+        if document is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Policy document not found.",
+            )
+
+        if payload.claim_id is not None:
+            claim_exists = session.scalar(
+                select(Claim.id).where(Claim.id == payload.claim_id)
+            )
+
+            if claim_exists is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Claim not found.",
+                )
+
+        existing_query = select(PolicyDocumentAccess).where(
+            PolicyDocumentAccess.document_id == document_id
+        )
+
+        if payload.team_id is not None:
+            existing_query = existing_query.where(
+                PolicyDocumentAccess.team_id == payload.team_id,
+                PolicyDocumentAccess.claim_id.is_(None),
+            )
+        else:
+            existing_query = existing_query.where(
+                PolicyDocumentAccess.claim_id == payload.claim_id,
+                PolicyDocumentAccess.team_id.is_(None),
+            )
+
+        if session.scalar(existing_query) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This access grant already exists.",
+            )
+
+        grant = PolicyDocumentAccess(
+            document_id=document_id,
+            team_id=payload.team_id,
+            claim_id=payload.claim_id,
+            granted_by_employee_id=employee.id,
+        )
+
+        session.add(grant)
+        session.flush()
+
+        scope = (
+            f"team:{payload.team_id}"
+            if payload.team_id is not None
+            else f"claim:{payload.claim_id}"
+        )
+
+        session.add(
+            AuditEvent(
+                actor_employee_id=employee.id,
+                action="policy_document_access_granted",
+                resource_type="policy_document",
+                resource_id=str(document_id),
+                details=f"Access granted for {scope}.",
+            )
+        )
+
+        session.commit()
+        session.refresh(grant)
+
+        return PolicyDocumentAccessGrantResponse.model_validate(grant)
+
+    except HTTPException:
+        session.rollback()
+        raise
+
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This access grant already exists or conflicts with an existing record.",
+        ) from None
+
+    except Exception:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The policy document access grant could not be created.",
+        ) from None
+
+
+@router.delete(
+    "/documents/{document_id}/access-grants/{grant_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_policy_document_access(
+    document_id: UUID,
+    grant_id: UUID,
+    employee: Employee = Depends(get_current_employee),
+    session: Session = Depends(get_db),
+) -> None:
+    """Revoke a specific team or claim access grant."""
+
+    require_access_management_permission(employee)
+
+    try:
+        grant = session.scalar(
+            select(PolicyDocumentAccess).where(
+                PolicyDocumentAccess.id == grant_id,
+                PolicyDocumentAccess.document_id == document_id,
+            )
+        )
+
+        if grant is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Policy document access grant not found.",
+            )
+
+        scope = (
+            f"team:{grant.team_id}"
+            if grant.team_id is not None
+            else f"claim:{grant.claim_id}"
+        )
+
+        session.add(
+            AuditEvent(
+                actor_employee_id=employee.id,
+                action="policy_document_access_revoked",
+                resource_type="policy_document",
+                resource_id=str(document_id),
+                details=f"Access revoked for {scope}.",
+            )
+        )
+
+        session.delete(grant)
+        session.commit()
+
+    except HTTPException:
+        session.rollback()
+        raise
+
+    except Exception:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The policy document access grant could not be revoked.",
+        ) from None

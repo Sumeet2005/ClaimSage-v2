@@ -263,3 +263,74 @@ class PolicyChunk(Base):
     document: Mapped[PolicyDocument] = relationship(
         back_populates="chunks",
     )
+
+class PolicyDocumentAccess(Base):
+    """Explicit team-level or claim-level access to a policy document."""
+
+    __tablename__ = "policy_document_access"
+
+    __table_args__ = (
+        CheckConstraint(
+            """
+            (
+                team_id IS NOT NULL
+                AND claim_id IS NULL
+                AND length(trim(team_id)) > 0
+            )
+            OR
+            (
+                team_id IS NULL
+                AND claim_id IS NOT NULL
+            )
+            """,
+            name="ck_policy_document_access_exactly_one_scope",
+        ),
+        UniqueConstraint(
+            "document_id",
+            "team_id",
+            name="uq_policy_document_access_document_team",
+        ),
+        UniqueConstraint(
+            "document_id",
+            "claim_id",
+            name="uq_policy_document_access_document_claim",
+        ),
+        Index("ix_policy_document_access_document_id", "document_id"),
+        Index("ix_policy_document_access_team_id", "team_id"),
+        Index("ix_policy_document_access_claim_id", "claim_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("policy_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    team_id: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    claim_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("claims.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    granted_by_employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("employees.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )

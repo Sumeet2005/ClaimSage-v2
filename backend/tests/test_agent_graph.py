@@ -8,6 +8,9 @@ from sqlalchemy.orm import Session
 from claimsage.agents import graph as graph_module
 from claimsage.agents.graph import run_investigation
 from claimsage.services.claim_access import ClaimAccessDeniedError
+from claimsage.services.document_access import (
+    PolicyDocumentAccessDeniedError,
+)
 
 
 def make_session() -> Session:
@@ -21,6 +24,8 @@ def test_authorized_claim_returns_structured_investigation(
     """An authorized claim produces claim facts and policy evidence."""
     employee_id = uuid4()
     claim_id = uuid4()
+    session = make_session()
+    task = "Investigate hospitalization coverage."
 
     facts = {
         "claim_id": str(claim_id),
@@ -56,19 +61,32 @@ def test_authorized_claim_returns_structured_investigation(
     )
 
     output = run_investigation(
-        session=make_session(),
+        session=session,
         employee_id=employee_id,
         claim_id=claim_id,
-        task="Investigate hospitalization coverage.",
+        task=task,
     )
 
-    claim_retrieval.assert_called_once()
-    policy_retrieval.assert_called_once()
+    claim_retrieval.assert_called_once_with(
+        session,
+        employee_id=employee_id,
+        claim_id=claim_id,
+    )
+
+    policy_retrieval.assert_called_once_with(
+        session,
+        employee_id=employee_id,
+        claim_id=claim_id,
+        query=task,
+        top_k=5,
+        min_similarity=0.20,
+    )
 
     assert output["error"] is None
     assert output["claim_facts"] == facts
     assert len(output["policy_evidence"]) == 1
     assert output["result"] is not None
+
     assert (
         output["result"]["evidence_status"]
         == "claim_and_policy_evidence_retrieved"
@@ -77,9 +95,13 @@ def test_authorized_claim_returns_structured_investigation(
     assert output["result"]["human_review_required"] is True
 
     evidence = output["result"]["policy_evidence"][0]
+
     assert evidence["filename"] == "synthetic_policy.pdf"
     assert evidence["page_number"] == 1
     assert evidence["similarity"] == 0.82
+    assert evidence["text"] == (
+        "Eligible hospitalization expenses are covered."
+    )
 
 
 def test_inaccessible_claim_returns_safe_error(monkeypatch) -> None:
@@ -113,6 +135,7 @@ def test_inaccessible_claim_returns_safe_error(monkeypatch) -> None:
     assert output["claim_facts"] is None
     assert output["result"] is None
     assert output["policy_evidence"] == []
+
     policy_retrieval.assert_not_called()
 
 
@@ -146,6 +169,8 @@ def test_nonexistent_claim_uses_same_safe_error(monkeypatch) -> None:
     assert output["error"] == "Claim not found or access denied."
     assert output["claim_facts"] is None
     assert output["result"] is None
+    assert output["policy_evidence"] == []
+
     policy_retrieval.assert_not_called()
 
 
@@ -181,6 +206,7 @@ def test_invalid_employee_uuid_returns_safe_error(monkeypatch) -> None:
     assert output["error"] == "Claim not found or access denied."
     assert output["claim_facts"] is None
     assert output["result"] is None
+
     retrieve.assert_not_called()
     policy_retrieval.assert_not_called()
 
@@ -217,6 +243,7 @@ def test_invalid_claim_uuid_returns_safe_error(monkeypatch) -> None:
     assert output["error"] == "Claim not found or access denied."
     assert output["claim_facts"] is None
     assert output["result"] is None
+
     retrieve.assert_not_called()
     policy_retrieval.assert_not_called()
 
@@ -247,6 +274,8 @@ def test_empty_task_is_rejected_without_retrieval(monkeypatch) -> None:
     assert output["error"] == "An investigation task is required."
     assert output["claim_facts"] is None
     assert output["result"] is None
+    assert output["policy_evidence"] == []
+
     retrieve.assert_not_called()
     policy_retrieval.assert_not_called()
 
@@ -255,9 +284,73 @@ def test_policy_retrieval_failure_does_not_create_unsupported_result(
     monkeypatch,
 ) -> None:
     """Retrieval failure must be reported without inventing evidence."""
+    employee_id = uuid4()
+    claim_id = uuid4()
+    session = make_session()
+
     facts = {
-        "claim_id": str(uuid4()),
+        "claim_id": str(claim_id),
         "claim_number": "CLM-TEST-002",
+        "claim_type": "property",
+        "status": "under_review",
+        "summary": "Synthetic test claim.",
+        "created_at": None,
+    }
+
+    claim_retrieval = MagicMock(return_value=facts)
+
+    policy_retrieval = MagicMock(
+        side_effect=graph_module.PolicyRetrievalError(
+            "Database unavailable."
+        )
+    )
+
+    monkeypatch.setattr(
+        graph_module,
+        "retrieve_authorized_claim",
+        claim_retrieval,
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "search_policy_chunks",
+        policy_retrieval,
+    )
+
+    output = run_investigation(
+        session=session,
+        employee_id=employee_id,
+        claim_id=claim_id,
+        task="Investigate this claim.",
+    )
+
+    claim_retrieval.assert_called_once()
+
+    policy_retrieval.assert_called_once_with(
+        session,
+        employee_id=employee_id,
+        claim_id=claim_id,
+        query="Investigate this claim.",
+        top_k=5,
+        min_similarity=0.20,
+    )
+
+    assert output["error"] == (
+        "Policy evidence retrieval is temporarily unavailable."
+    )
+    assert output["claim_facts"] == facts
+    assert output["policy_evidence"] == []
+    assert output["result"] is None
+
+
+def test_policy_document_access_denied_returns_safe_error(
+    monkeypatch,
+) -> None:
+    """Document authorization failures must not expose policy evidence."""
+    employee_id = uuid4()
+    claim_id = uuid4()
+    facts = {
+        "claim_id": str(claim_id),
+        "claim_number": "CLM-TEST-003",
         "claim_type": "property",
         "status": "under_review",
         "summary": "Synthetic test claim.",
@@ -273,22 +366,20 @@ def test_policy_retrieval_failure_does_not_create_unsupported_result(
         graph_module,
         "search_policy_chunks",
         MagicMock(
-            side_effect=graph_module.PolicyRetrievalError(
-                "Database unavailable."
+            side_effect=PolicyDocumentAccessDeniedError(
+                "Policy document access denied."
             )
         ),
     )
 
     output = run_investigation(
         session=make_session(),
-        employee_id=uuid4(),
-        claim_id=uuid4(),
+        employee_id=employee_id,
+        claim_id=claim_id,
         task="Investigate this claim.",
     )
 
-    assert output["error"] == (
-        "Policy evidence retrieval is temporarily unavailable."
-    )
-    assert output["claim_facts"] == facts
+    assert output["error"] == "Policy document access denied."
+    assert output["claim_facts"] is None
     assert output["policy_evidence"] == []
     assert output["result"] is None
