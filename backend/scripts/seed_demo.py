@@ -5,7 +5,6 @@ from sqlalchemy import select
 from claimsage.db.models import AuditEvent, Claim, Employee, EmployeeRole
 from claimsage.db.session import SessionLocal
 
-
 DEMO_EMPLOYEES = [
     {
         "email": "alex.adjuster@claimsage.local",
@@ -42,7 +41,7 @@ DEMO_EMPLOYEES = [
 DEMO_CLAIMS = [
     {
         "claim_number": "CLM-DEMO-1001",
-        "claimant_name": "Morgan Example",
+        "claimant_name": "Aarav Sharma",
         "claim_type": "property",
         "status": "under_review",
         "team_id": "property-team",

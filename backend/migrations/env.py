@@ -1,24 +1,42 @@
 """Alembic migration environment for ClaimSage."""
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
-from claimsage.core.config import get_settings
-from claimsage.db.base import Base
 from claimsage.db import models  # noqa: F401
+from claimsage.db.base import Base
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Load the database URL from ClaimSage settings.
+database_url_value = os.environ.get("DATABASE_URL")
+if not database_url_value:
+    raise RuntimeError("DATABASE_URL must be explicitly set for Alembic.")
+
+try:
+    database_url = make_url(database_url_value)
+except (ArgumentError, TypeError, ValueError):
+    raise RuntimeError("DATABASE_URL must be a valid PostgreSQL URL.") from None
+
+if database_url.get_backend_name() != "postgresql":
+    raise RuntimeError("Alembic requires a PostgreSQL DATABASE_URL.")
+ALLOWED_DATABASES = {"claimsage_test", "claimsage"}
+if database_url.database not in ALLOWED_DATABASES:
+    raise RuntimeError(
+        f"Alembic is restricted to approved databases: {ALLOWED_DATABASES}."
+    )
+
 # Escaping percent signs prevents ConfigParser interpolation errors.
 config.set_main_option(
     "sqlalchemy.url",
-    get_settings().database_url.replace("%", "%%"),
+    database_url_value.replace("%", "%%"),
 )
 
 # Register all SQLAlchemy models for automatic migration generation.
@@ -50,6 +68,14 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        database_name = connection.execute(
+            text("SELECT current_database()")
+        ).scalar_one()
+        if database_name not in ALLOWED_DATABASES:
+            raise RuntimeError(
+                f"Alembic is restricted to approved databases: {ALLOWED_DATABASES}."
+            )
+
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
@@ -58,9 +84,11 @@ def run_migrations_online() -> None:
 
         with context.begin_transaction():
             context.run_migrations()
+        connection.commit()
 
 
 if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
+

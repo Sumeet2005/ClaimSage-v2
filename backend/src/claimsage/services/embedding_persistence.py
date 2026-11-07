@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from claimsage.db.models import PolicyChunk
@@ -26,6 +27,7 @@ def embed_pending_policy_chunks(
     db: Session,
     batch_size: int = MAX_BATCH_SIZE,
     embedding_service: LocalEmbeddingService | None = None,
+    document_id: UUID | None = None,
 ) -> int:
     """
     Generate and persist one bounded batch of missing policy embeddings.
@@ -52,11 +54,19 @@ def embed_pending_policy_chunks(
 
     statement = (
         select(PolicyChunk)
-        .where(PolicyChunk.embedding.is_(None))
+        .where(
+            or_(
+                PolicyChunk.embedding.is_(None),
+                PolicyChunk.embedding_model.is_distinct_from(
+                    service.model_name
+                ),
+            )
+        )
         .order_by(PolicyChunk.created_at, PolicyChunk.id)
-        .limit(batch_size)
-        .with_for_update(skip_locked=True)
     )
+    if document_id is not None:
+        statement = statement.where(PolicyChunk.document_id == document_id)
+    statement = statement.limit(batch_size).with_for_update(skip_locked=True)
 
     chunks = list(db.scalars(statement).all())
 

@@ -15,15 +15,21 @@ dependencies = [
     "email-validator>=2.2,<3.0",
     "sqlalchemy>=2.0,<3.0",
     "psycopg[binary]>=3.2,<4.0",
+    "pgvector>=0.3.6,<1.0",
     "alembic>=1.14,<2.0",
     "PyJWT[crypto]>=2.10,<3.0",
     "pwdlib[argon2]>=0.2.1,<1.0",
+    "pypdf>=5.0,<7.0",
+    "python-multipart>=0.0.20,<1.0",
     "pytesseract>=0.3.13,<1.0",
     "Pillow>=10,<14",
     "langgraph>=1.2,<2.0",
     "langchain-groq>=1.1,<2.0",
+    "google-genai>=1.0,<2.0",
+    "tiktoken>=0.9,<1.0",
     "sentence-transformers>=5.7,<6.0",
     "PyMuPDF>=1.24,<3.0",
+    "boto3>=1.34,<2.0",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +37,7 @@ dev = [
     "httpx>=0.27,<1.0",
     "pytest>=8.0,<9.0",
     "ruff>=0.9,<1.0",
+    "selenium>=4.25,<5.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -39,6 +46,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+norecursedirs = [".*", "build", "dist", "venv", ".venv", "scripts", "backups", "node_modules"]
 addopts = "-ra"
 
 [tool.ruff]

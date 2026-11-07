@@ -1,4 +1,4 @@
-﻿from uuid import uuid4
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -6,8 +6,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from claimsage.db.base import Base
-from claimsage.db.models import PolicyChunk, PolicyDocument
+from claimsage.db.models import (
+    Employee,
+    PolicyChunk,
+    PolicyClause,
+    PolicyDocument,
+    PolicyDocumentApplicability,
+)
 from claimsage.rag.document_loader import DocumentChunk, PageText
+from claimsage.schemas.policies import PolicyDocumentApplicability as Applicability
 from claimsage.services import document_persistence as persistence
 
 
@@ -18,13 +25,20 @@ def db_session():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    test_tables = [
+        Employee.__table__,
+        PolicyDocument.__table__,
+        PolicyDocumentApplicability.__table__,
+        PolicyChunk.__table__,
+        PolicyClause.__table__,
+    ]
 
-    Base.metadata.create_all(engine)
+    Base.metadata.create_all(engine, tables=test_tables)
 
     with Session(engine) as session:
         yield session
 
-    Base.metadata.drop_all(engine)
+    Base.metadata.drop_all(engine, tables=test_tables)
     engine.dispose()
 
 
@@ -130,6 +144,101 @@ def test_persists_document_and_chunks(
     ocr_chunk = chunks_by_page[2]
     assert ocr_chunk.extraction_method == "ocr"
     assert ocr_chunk.ocr_confidence == pytest.approx(94.5)
+
+    clauses = db_session.scalars(
+        select(PolicyClause).where(
+            PolicyClause.document_id == document.id
+        )
+    ).all()
+    assert len(clauses) == len(saved_chunks)
+    assert all(
+        clause.verification_status == "pending_review"
+        for clause in clauses
+    )
+    assert {
+        clause.source_page_number for clause in clauses
+    } == {1, 2}
+
+
+def test_persists_verified_applicability_metadata(
+    db_session,
+    fake_pdf,
+    mock_extraction,
+):
+    applicability = Applicability(
+        supported_claim_types=[" Property ", "AUTO"],
+        policy_identifier=" POLICY-2026-001 ",
+        insurance_type="property",
+        policy_version=" 2026-A ",
+        effective_from="2026-01-01",
+        effective_to="2026-12-31",
+    )
+
+    document = persistence.persist_policy_document(
+        db=db_session,
+        file_path=fake_pdf,
+        uploader_employee_id=uuid4(),
+        applicability=applicability,
+    )
+
+    assert document.policy_identifier == "POLICY-2026-001"
+    assert document.insurance_type == "property"
+    assert document.policy_version == "2026-A"
+    assert document.effective_from.isoformat() == "2026-01-01"
+    assert document.effective_to.isoformat() == "2026-12-31"
+    records = db_session.scalars(
+        select(PolicyDocumentApplicability).where(
+            PolicyDocumentApplicability.document_id == document.id
+        )
+    ).all()
+    assert {record.claim_type for record in records} == {"property", "auto"}
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {
+            "supported_claim_types": ["property"],
+            "policy_identifier": "SYN-PROP-POL-001",
+            "insurance_type": "property",
+            "policy_version": "v1",
+        },
+        {
+            "supported_claim_types": ["property"],
+            "policy_identifier": "SYN-PROP-POL-001",
+            "insurance_type": "auto",
+            "policy_version": "v1",
+            "effective_from": "2026-01-01",
+        },
+        {
+            "supported_claim_types": ["travel"],
+            "policy_identifier": "SYN-PROP-POL-001",
+        },
+        {
+            "supported_claim_types": ["property"],
+            "policy_identifier": "SYN-PROP-POL-001",
+            "insurance_type": "property",
+            "policy_version": "v1",
+            "effective_from": "2026-12-31",
+            "effective_to": "2026-01-01",
+        },
+    ],
+)
+def test_rejects_incomplete_or_invalid_policy_metadata(values):
+    with pytest.raises(ValueError):
+        Applicability.model_validate(values)
+
+
+def test_normalizes_explicit_clause_heading_without_verifying_it():
+    category, title, identifier = persistence._extract_clause_metadata(
+        "Section 4.2 Coverage: Synthetic source wording.",
+        page_number=3,
+        chunk_index=1,
+    )
+
+    assert category == "coverage"
+    assert title == "Synthetic source wording."
+    assert identifier == "4.2"
 
 
 def test_rejects_duplicate_document(

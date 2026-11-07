@@ -15,8 +15,10 @@ from claimsage.db.models import (
     Employee,
     PolicyChunk,
     PolicyDocument,
+    PolicyDocumentApplicability,
 )
 from claimsage.db.session import SessionLocal
+from claimsage.schemas.policies import PolicyDocumentApplicability as Applicability
 from claimsage.services.document_persistence import (
     DocumentPersistenceError,
     DuplicatePolicyDocumentError,
@@ -72,18 +74,70 @@ def install_fake_persistence(monkeypatch):
         file_path: str | Path,
         uploader_employee_id,
         filename: str | None = None,
+        applicability: Applicability | None = None,
+        source_url: str | None = None,
+        **kwargs,
     ):
         document = PolicyDocument(
             filename=filename or Path(file_path).name,
             checksum_sha256=uuid4().hex + uuid4().hex,
             mime_type="application/pdf",
             file_size_bytes=Path(file_path).stat().st_size,
+            source_url=source_url,
+            storage_provider=kwargs.get("storage_provider"),
+            storage_bucket=kwargs.get("storage_bucket"),
+            storage_key=kwargs.get("storage_key"),
+            storage_status=kwargs.get("storage_status"),
+            insurer_name=(
+                applicability.insurer_name
+                if applicability is not None
+                else None
+            ),
+            product_name=(
+                applicability.product_name
+                if applicability is not None
+                else None
+            ),
             uploaded_by_employee_id=uploader_employee_id,
-            status="processed",
+            policy_identifier=(
+                applicability.policy_identifier
+                if applicability is not None
+                else None
+            ),
+            insurance_type=(
+                applicability.insurance_type
+                if applicability is not None
+                else None
+            ),
+            policy_version=(
+                applicability.policy_version
+                if applicability is not None
+                else None
+            ),
+            effective_from=(
+                applicability.effective_from
+                if applicability is not None
+                else None
+            ),
+            effective_to=(
+                applicability.effective_to
+                if applicability is not None
+                else None
+            ),
+            status="uploaded",
         )
 
         db.add(document)
         db.flush()
+
+        if applicability is not None:
+            db.add_all(
+                PolicyDocumentApplicability(
+                    document_id=document.id,
+                    claim_type=claim_type,
+                )
+                for claim_type in applicability.supported_claim_types
+            )
 
         db.add(
             PolicyChunk(
@@ -102,6 +156,18 @@ def install_fake_persistence(monkeypatch):
         policy_routes,
         "persist_policy_document",
         fake_persist,
+    )
+
+    def fake_embed(db, *, document_id):
+        document = db.get(PolicyDocument, document_id)
+        document.status = "processed"
+        db.commit()
+        return document
+
+    monkeypatch.setattr(
+        policy_routes,
+        "process_policy_document_embeddings",
+        fake_embed,
     )
 
 
@@ -250,7 +316,7 @@ def test_policy_upload_successfully_persists_document_and_audit_event(
     body = response.json()
 
     assert body["filename"] == "synthetic-policy.pdf"
-    assert body["status"] == "processed"
+    assert body["status"] == "ready"
     assert body["chunk_count"] == 1
     assert body["document_id"]
 
@@ -279,6 +345,119 @@ def test_policy_upload_successfully_persists_document_and_audit_event(
         assert audit_event is not None
         assert audit_event.actor_employee_id == upload_employee["id"]
 
+def test_policy_upload_requires_access_manager_for_applicability_metadata(
+    client: TestClient,
+    upload_employee: dict,
+) -> None:
+    headers = authorization_headers(client, upload_employee["email"])
+    response = client.post(
+        UPLOAD_URL,
+        headers=headers,
+        data={
+            "supported_claim_types": "property",
+            "policy_identifier": "POLICY-PROPERTY-001",
+        },
+        files={
+            "file": (
+                "property-policy.pdf",
+                b"%PDF-1.4 synthetic policy",
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_policy_upload_persists_admin_supplied_applicability(
+    client: TestClient,
+    claims_scenario: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_persistence(monkeypatch)
+    headers = authorization_headers(client, claims_scenario["admin_email"])
+    try:
+        response = client.post(
+            UPLOAD_URL,
+            headers=headers,
+            data={
+                "supported_claim_types": ["Property", "AUTO"],
+                "policy_identifier": "POLICY-MULTI-001",
+                "insurer_name": "Synthetic Assurance",
+                "product_name": "Synthetic Property Cover",
+                "insurance_type": "Property",
+                "policy_version": "synthetic-2026-v1",
+                "effective_from": "2026-01-01",
+                "effective_to": "2026-12-31",
+                "source_url": "https://policy.example.test/source.pdf",
+            },
+            files={
+                "file": (
+                    "multi-line-policy.pdf",
+                    b"%PDF-1.4 synthetic policy",
+                    "application/pdf",
+                )
+            },
+        )
+
+        assert response.status_code == 201
+        response_body = response.json()
+        assert response_body["insurer_name"] == "Synthetic Assurance"
+        assert response_body["product_name"] == "Synthetic Property Cover"
+        assert response_body["source_url"] == (
+            "https://policy.example.test/source.pdf"
+        )
+        with SessionLocal() as session:
+            document = session.get(
+                PolicyDocument,
+                response.json()["document_id"],
+            )
+            assert document is not None
+            assert document.policy_identifier == "POLICY-MULTI-001"
+            assert document.insurer_name == "Synthetic Assurance"
+            assert document.product_name == "Synthetic Property Cover"
+            assert document.source_url == "https://policy.example.test/source.pdf"
+            assert document.insurance_type == "property"
+            assert document.policy_version == "synthetic-2026-v1"
+            assert document.effective_from.isoformat() == "2026-01-01"
+            assert document.effective_to.isoformat() == "2026-12-31"
+            assert {
+                entry.claim_type for entry in document.supported_claim_types
+            } == {"property", "auto"}
+    finally:
+        with SessionLocal.begin() as session:
+            admin = session.scalar(
+                select(Employee).where(
+                    Employee.email == claims_scenario["admin_email"]
+                )
+            )
+            if admin is not None:
+                session.execute(
+                    delete(PolicyDocument).where(
+                        PolicyDocument.uploaded_by_employee_id == admin.id
+                    )
+                )
+
+
+def test_policy_upload_rejects_partial_applicability_metadata(
+    client: TestClient,
+    claims_scenario: dict,
+) -> None:
+    headers = authorization_headers(client, claims_scenario["admin_email"])
+    response = client.post(
+        UPLOAD_URL,
+        headers=headers,
+        data={"supported_claim_types": "property"},
+        files={
+            "file": (
+                "property-policy.pdf",
+                b"%PDF-1.4 synthetic policy",
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_policy_upload_rejects_oversized_content_length(

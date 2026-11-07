@@ -36,6 +36,10 @@ def persist_claim_evidence(
     uploader_employee_id: UUID,
     filename: str | None = None,
     embedding_service: LocalEmbeddingService | None = None,
+    storage_provider: str | None = None,
+    storage_bucket: str | None = None,
+    storage_key: str | None = None,
+    storage_status: str | None = None,
 ) -> ClaimEvidenceDocument:
     """Extract, embed, and persist evidence for one insurance claim.
 
@@ -163,6 +167,10 @@ def persist_claim_evidence(
         mime_type="application/pdf",
         file_size_bytes=file_size,
         uploaded_by_employee_id=uploader_employee_id,
+        storage_provider=storage_provider,
+        storage_bucket=storage_bucket,
+        storage_key=storage_key,
+        storage_status=storage_status or ("stored" if storage_key else "unavailable"),
         status="processing",
     )
 

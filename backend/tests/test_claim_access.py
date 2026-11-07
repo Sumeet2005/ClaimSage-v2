@@ -12,6 +12,7 @@ from claimsage.db.models import (
     Claim,
     Employee,
     EmployeeRole,
+    InvestigationRun,
 )
 from claimsage.db.session import SessionLocal
 from claimsage.main import app
@@ -61,7 +62,7 @@ def claims_scenario() -> Generator[dict, None, None]:
 
         claim_assigned_to_adjuster = Claim(
             claim_number=f"CLM-T-{suffix}-1",
-            claimant_name="Synthetic Claimant One",
+            claimant_name="Aarav Sharma",
             claim_type="property",
             status="under_review",
             assigned_employee_id=adjuster.id,
@@ -70,7 +71,7 @@ def claims_scenario() -> Generator[dict, None, None]:
         )
         claim_assigned_to_other = Claim(
             claim_number=f"CLM-T-{suffix}-2",
-            claimant_name="Synthetic Claimant Two",
+            claimant_name="Ananya Kulkarni",
             claim_type="auto",
             status="under_review",
             assigned_employee_id=other_adjuster.id,
@@ -79,7 +80,7 @@ def claims_scenario() -> Generator[dict, None, None]:
         )
         unassigned_team_claim = Claim(
             claim_number=f"CLM-T-{suffix}-3",
-            claimant_name="Synthetic Claimant Three",
+            claimant_name="Rohan Deshmukh",
             claim_type="property",
             status="documents_pending",
             assigned_employee_id=None,
@@ -131,6 +132,11 @@ def claims_scenario() -> Generator[dict, None, None]:
         yield scenario
     finally:
         with SessionLocal.begin() as session:
+            session.execute(
+                delete(InvestigationRun).where(
+                    InvestigationRun.claim_id.in_(claim_ids)
+                )
+            )
             session.execute(
                 delete(Claim).where(Claim.id.in_(claim_ids))
             )
@@ -202,7 +208,7 @@ def test_admin_can_list_all_claims(
     client: TestClient,
     claims_scenario: dict,
 ) -> None:
-    """Admins may see every claim, including pre-existing demo claims."""
+    """Admins may see every claim created by the isolated test fixture."""
     token = login(client, claims_scenario["admin_email"])
 
     response = client.get(
@@ -215,15 +221,8 @@ def test_admin_can_list_all_claims(
         claim["claim_number"] for claim in response.json()
     }
 
-    # Every claim created by this test scenario must be visible.
+    # Every claim created by the isolated fixture must be visible.
     assert claims_scenario["claim_numbers"].issubset(returned_numbers)
-
-    # Confirm the API also returns existing seeded demo claims.
-    assert {
-        "CLM-DEMO-1001",
-        "CLM-DEMO-1002",
-        "CLM-DEMO-2001",
-    }.issubset(returned_numbers)
 
 
 def test_adjuster_can_get_assigned_claim(

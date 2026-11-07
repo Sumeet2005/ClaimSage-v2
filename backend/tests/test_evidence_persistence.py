@@ -1,11 +1,13 @@
 """Tests for claim evidence persistence."""
 
+import os
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, event, func, select
+from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 from claimsage.db.base import Base
 from claimsage.db.models import (
@@ -43,30 +45,87 @@ class FakeEmbeddingService:
 
 @pytest.fixture
 def db_session():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    """Create required tables in a disposable claimsage_test schema."""
 
-    @event.listens_for(engine, "connect")
-    def configure_sqlite_connection(
-        dbapi_connection,
-        _connection_record,
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        pytest.fail(
+            "DATABASE_URL must explicitly target PostgreSQL claimsage_test.",
+            pytrace=False,
+        )
+
+    try:
+        parsed_url = make_url(database_url)
+    except (ArgumentError, TypeError, ValueError):
+        pytest.fail(
+            "DATABASE_URL must explicitly target PostgreSQL claimsage_test.",
+            pytrace=False,
+        )
+
+    if (
+        parsed_url.get_backend_name() != "postgresql"
+        or parsed_url.database != "claimsage_test"
     ):
-        dbapi_connection.isolation_level = None
+        pytest.fail(
+            "Refusing database test setup outside PostgreSQL claimsage_test.",
+            pytrace=False,
+        )
 
-    @event.listens_for(engine, "begin")
-    def begin_sqlite_transaction(connection):
-        connection.exec_driver_sql("BEGIN")
+    engine = create_engine(database_url, pool_pre_ping=True)
+    schema_name = f"claimsage_evidence_tests_{uuid4().hex}"
+    connection = None
+    schema_created = False
 
-    Base.metadata.create_all(engine)
+    try:
+        try:
+            connection = engine.connect()
+            database_name = connection.scalar(
+                text("SELECT current_database()")
+            )
+        except Exception:
+            pytest.fail(
+                "Could not verify the PostgreSQL test database; "
+                "connection details suppressed.",
+                pytrace=False,
+            )
 
-    with Session(engine) as session:
-        yield session
+        if database_name != "claimsage_test":
+            pytest.fail(
+                "Refusing database test setup outside claimsage_test.",
+                pytrace=False,
+            )
 
-    Base.metadata.drop_all(engine)
-    engine.dispose()
+        connection.execute(text(f"CREATE SCHEMA {schema_name}"))
+        connection.execute(
+            text(f"SET search_path TO {schema_name}, public")
+        )
+        connection.commit()
+        schema_created = True
+
+        Base.metadata.create_all(
+            connection,
+            tables=[
+                Employee.__table__,
+                Claim.__table__,
+                ClaimEvidenceDocument.__table__,
+                ClaimEvidenceChunk.__table__,
+            ],
+            checkfirst=False,
+        )
+        connection.commit()
+
+        with Session(bind=connection) as session:
+            yield session
+    finally:
+        if connection is not None:
+            if schema_created:
+                connection.rollback()
+                connection.execute(
+                    text(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+                )
+                connection.commit()
+            connection.close()
+        engine.dispose()
 
 
 @pytest.fixture

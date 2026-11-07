@@ -1,7 +1,14 @@
-﻿import pytest
+import pytest
 from pydantic import ValidationError
 
 from claimsage.core.config import Settings
+
+
+@pytest.fixture(autouse=True)
+def default_jwt_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "JWT_SECRET_KEY", "test-secret-key-that-is-at-least-32-bytes-long"
+    )
 
 
 def test_ocr_settings_defaults() -> None:
@@ -94,5 +101,33 @@ def test_invalid_upload_request_limits_are_rejected(
 ) -> None:
     monkeypatch.setenv("UPLOAD_MAX_REQUEST_BYTES", value)
 
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_gemini_settings_defaults_and_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    default_settings = Settings(_env_file=None)
+    assert default_settings.gemini_api_key is None
+    assert default_settings.gemini_model == "gemini-2.5-flash"
+
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-gemini-key-not-real")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    configured = Settings(_env_file=None)
+    assert configured.gemini_api_key is not None
+    assert configured.gemini_api_key.get_secret_value() == "synthetic-gemini-key-not-real"
+    assert "synthetic-gemini-key-not-real" not in repr(configured)
+    assert configured.gemini_model == "gemini-2.5-flash-lite"
+
+
+@pytest.mark.parametrize("invalid_model", ["", "   ", "gemini model with spaces", "gemini\nflash"])
+def test_invalid_gemini_model_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_model: str,
+) -> None:
+    monkeypatch.setenv("GEMINI_MODEL", invalid_model)
     with pytest.raises(ValidationError):
         Settings(_env_file=None)

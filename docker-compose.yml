@@ -5,18 +5,173 @@ services:
     container_name: claimsage-db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: claimsage
-      POSTGRES_USER: claimsage_app
+      POSTGRES_DB: ${POSTGRES_DB:-claimsage}
+      POSTGRES_USER: ${POSTGRES_USER:-claimsage_app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-local-password}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "${POSTGRES_PORT_BINDING:-127.0.0.1:5432}:5432"
     volumes:
       - claimsage_postgres_data:/var/lib/postgresql/data
+      - ./docker/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U claimsage_app -d claimsage"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 5s
+    networks:
+      - claimsage_network
+
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    container_name: claimsage-minio
+    restart: unless-stopped
+    user: "0:0"
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY:-claimsage_minio_admin}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_KEY:-change-this-minio-password}
+    volumes:
+      - claimsage_minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9000/minio/health/ready || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - claimsage_network
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: claimsage-backend:latest
+    container_name: claimsage-migrate
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-claimsage_app}:${POSTGRES_PASSWORD:-change-this-local-password}@db:5432/${POSTGRES_DB:-claimsage}
+      PYTHONPATH: /app/src:/app
+      CLAIMSAGE_DISABLE_DOTENV: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    restart: "no"
+    networks:
+      - claimsage_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: claimsage-backend:latest
+    container_name: claimsage-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-claimsage_app}:${POSTGRES_PASSWORD:-change-this-local-password}@db:5432/${POSTGRES_DB:-claimsage}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-test-jwt-secret-key-that-is-at-least-32-bytes-long}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      GROQ_FALLBACK_MODEL: ${GROQ_FALLBACK_MODEL:-}
+      GROQ_MAX_OUTPUT_TOKENS: ${GROQ_MAX_OUTPUT_TOKENS:-4096}
+      GROQ_TIMEOUT_SECONDS: ${GROQ_TIMEOUT_SECONDS:-60.0}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      APP_ENV: ${APP_ENV:-development}
+      EMAIL_BACKEND: ${EMAIL_BACKEND:-sandbox}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-claimsage-noreply@example.invalid}
+      EMAIL_APP_BASE_URL: ${EMAIL_APP_BASE_URL:-http://localhost}
+      STORAGE_BACKEND: "s3"
+      STORAGE_ENDPOINT_URL: "http://minio:9000"
+      STORAGE_BUCKET_NAME: ${STORAGE_BUCKET_NAME:-claimsage-documents}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-claimsage_minio_admin}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-change-this-minio-password}
+      STORAGE_USE_SSL: "false"
+      STORAGE_AUTO_CREATE_BUCKET: "true"
+      PYTHONPATH: /app/src:/app
+      PYTHONUNBUFFERED: "1"
+      CLAIMSAGE_DISABLE_DOTENV: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    command: ["uvicorn", "claimsage.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - claimsage_network
+
+  worker:
+    image: claimsage-backend:latest
+    container_name: claimsage-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-claimsage_app}:${POSTGRES_PASSWORD:-change-this-local-password}@db:5432/${POSTGRES_DB:-claimsage}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-test-jwt-secret-key-that-is-at-least-32-bytes-long}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      GROQ_FALLBACK_MODEL: ${GROQ_FALLBACK_MODEL:-}
+      GROQ_MAX_OUTPUT_TOKENS: ${GROQ_MAX_OUTPUT_TOKENS:-4096}
+      GROQ_TIMEOUT_SECONDS: ${GROQ_TIMEOUT_SECONDS:-60.0}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      APP_ENV: ${APP_ENV:-development}
+      EMAIL_BACKEND: ${EMAIL_BACKEND:-sandbox}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-claimsage-noreply@example.invalid}
+      EMAIL_APP_BASE_URL: ${EMAIL_APP_BASE_URL:-http://localhost}
+      STORAGE_BACKEND: "s3"
+      STORAGE_ENDPOINT_URL: "http://minio:9000"
+      STORAGE_BUCKET_NAME: ${STORAGE_BUCKET_NAME:-claimsage-documents}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-claimsage_minio_admin}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-change-this-minio-password}
+      STORAGE_USE_SSL: "false"
+      STORAGE_AUTO_CREATE_BUCKET: "true"
+      PYTHONPATH: /app/src:/app
+      PYTHONUNBUFFERED: "1"
+      CLAIMSAGE_DISABLE_DOTENV: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    command: ["python", "-u", "scripts/run_investigation_worker.py"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -u scripts/run_investigation_worker.py --check-readiness || exit 1"]
+      interval: 10s
+      timeout: 30s
+      retries: 5
+      start_period: 5s
+    networks:
+      - claimsage_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: claimsage-frontend:latest
+    container_name: claimsage-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - claimsage_network
+
+networks:
+  claimsage_network:
+    driver: bridge
 
 volumes:
   claimsage_postgres_data:
+  claimsage_minio_data:

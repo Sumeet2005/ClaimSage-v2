@@ -29,7 +29,7 @@ def retrieve_authorized_claim(
             "Claim not found or access denied."
         ) from None
 
-    return {
+    facts: dict[str, object] = {
         "claim_id": str(claim.id),
         "claim_number": claim.claim_number,
         "claim_type": claim.claim_type,
@@ -40,4 +40,12 @@ def retrieve_authorized_claim(
             if claim.created_at is not None
             else None
         ),
+        "loss_date": (
+            claim.loss_date.isoformat()
+            if claim.loss_date is not None
+            else None
+        ),
     }
+    if claim.policy_identifier is not None:
+        facts["policy_identifier"] = claim.policy_identifier
+    return facts

@@ -1,0 +1,84 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --font-sans: 'Inter', sans-serif;
+  --font-display: 'Space Grotesk', sans-serif;
+
+  --color-graphite-950: var(--graphite-950);
+  --color-graphite-900: var(--graphite-900);
+  --color-graphite-800: var(--graphite-800);
+  --color-graphite-700: var(--graphite-700);
+  --color-graphite-600: var(--graphite-600);
+  --color-graphite-500: var(--graphite-500);
+  --color-graphite-400: var(--graphite-400);
+
+  --color-ivory-50: var(--ivory-50);
+  --color-ivory-100: var(--ivory-100);
+  --color-ivory-200: var(--ivory-200);
+  --color-ivory-300: var(--ivory-300);
+
+  --color-emerald: var(--emerald);
+  --color-emerald-dark: var(--emerald-dark);
+  --color-emerald-light: var(--emerald-light);
+  --color-champagne: var(--champagne);
+  --color-champagne-light: var(--champagne-light);
+}
+
+:root {
+  color-scheme: light;
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  --graphite-950: #191c19;
+  --graphite-900: #222722;
+  --graphite-800: #303730;
+  --graphite-700: #475047;
+  --graphite-600: #626b61;
+  --graphite-500: #7c8579;
+  --graphite-400: #a0a79d;
+
+  --ivory-50: #fbfaf6;
+  --ivory-100: #f3f0e7;
+  --ivory-200: #e8e3d7;
+  --ivory-300: #d8d1c2;
+
+  --emerald: #397454;
+  --emerald-dark: #285d42;
+  --emerald-light: #e4eee6;
+  --champagne: #b79b6a;
+  --champagne-light: #eee6d6;
+
+  background: var(--ivory-50);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--ivory-50);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--emerald);
+  outline-offset: 3px;
+}
+
+::selection {
+  color: var(--ivory-50);
+  background: var(--emerald);
+}

@@ -43,10 +43,15 @@ def login(
     if not authenticated or employee is None:
         session.add(
             AuditEvent(
+                actor_type="employee",
+                actor_id=request.email[:100],
                 actor_employee_id=None,
+                event_category="auth",
                 action="login_failed",
+                outcome="denied",
                 resource_type="employee_authentication",
                 details="Invalid credentials.",
+                event_metadata={"attempted_email": request.email[:100]},
             )
         )
         session.commit()
@@ -61,8 +66,12 @@ def login(
 
     session.add(
         AuditEvent(
+            actor_type="employee",
+            actor_id=employee.display_name,
             actor_employee_id=employee.id,
+            event_category="auth",
             action="login_succeeded",
+            outcome="success",
             resource_type="employee_authentication",
             resource_id=str(employee.id),
             details="Employee authenticated successfully.",

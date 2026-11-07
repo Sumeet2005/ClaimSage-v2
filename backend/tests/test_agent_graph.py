@@ -3,10 +3,12 @@
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
 from sqlalchemy.orm import Session
 
 from claimsage.agents import graph as graph_module
 from claimsage.agents.graph import run_investigation
+from claimsage.agents.schemas import ReviewReportOutput, SupervisorPlan
 from claimsage.services.claim_access import ClaimAccessDeniedError
 from claimsage.services.document_access import (
     PolicyDocumentAccessDeniedError,
@@ -16,6 +18,51 @@ from claimsage.services.document_access import (
 def make_session() -> Session:
     """Create a mock database session without connecting to PostgreSQL."""
     return MagicMock(spec=Session)
+
+
+@pytest.fixture(autouse=True)
+def mock_specialist_planning_and_claim_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep graph regression tests independent of LLM and database services."""
+
+    def create_plan(**kwargs) -> SupervisorPlan:
+        available_analysts = kwargs["available_analysts"]
+        selected_analyst = (
+            "policy_analyst"
+            if "policy_analyst" in available_analysts
+            else "intake_agent"
+        )
+        return SupervisorPlan(
+            selected_analysts=[selected_analyst],
+            routing_rationale="Synthetic deterministic regression-test plan.",
+            human_review_required=True,
+        )
+
+    monkeypatch.setattr(graph_module, "create_supervisor_plan", create_plan)
+    monkeypatch.setattr(
+        graph_module,
+        "has_applicable_policy_documents",
+        MagicMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "search_claim_evidence",
+        MagicMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "analyze_review_report",
+        MagicMock(
+            return_value=ReviewReportOutput(
+                overall_status="insufficient_evidence",
+                specialist_coverage=[],
+                evidence_retrieval_status="not_performed",
+                evidence_scope_note="Synthetic report for graph tests.",
+                human_review_required=True,
+            )
+        ),
+    )
 
 
 def test_authorized_claim_returns_structured_investigation(
@@ -31,6 +78,7 @@ def test_authorized_claim_returns_structured_investigation(
         "claim_id": str(claim_id),
         "claim_number": "CLM-TEST-001",
         "claim_type": "property",
+        "policy_identifier": "TEST-PROPERTY-POLICY",
         "status": "under_review",
         "summary": "Synthetic test claim.",
         "created_at": None,
@@ -45,6 +93,16 @@ def test_authorized_claim_returns_structured_investigation(
     policy_chunk.text = "Eligible hospitalization expenses are covered."
     policy_chunk.similarity = 0.82
     policy_chunk.embedding_model = "test-model"
+    policy_chunk.clause_id = uuid4()
+    policy_chunk.clause_identifier = "source-page-1-chunk-0"
+    policy_chunk.clause_category = "other"
+    policy_chunk.verification_status = "pending_review"
+    policy_chunk.policy_version = "synthetic-v1"
+    policy_chunk.source_url = "https://policy.example.test/source.pdf"
+    policy_chunk.insurer_name = "Synthetic Assurance"
+    policy_chunk.product_name = "Synthetic Health Product"
+    policy_chunk.effective_from = None
+    policy_chunk.effective_to = None
 
     claim_retrieval = MagicMock(return_value=facts)
     policy_retrieval = MagicMock(return_value=[policy_chunk])
@@ -122,6 +180,56 @@ def test_authorized_claim_returns_structured_investigation(
     assert evidence["text"] == (
         "Eligible hospitalization expenses are covered."
     )
+    assert evidence["source_url"] == "https://policy.example.test/source.pdf"
+    assert evidence["insurer_name"] == "Synthetic Assurance"
+    assert evidence["product_name"] == "Synthetic Health Product"
+    assert evidence["effective_from"] is None
+
+
+def test_provider_failure_persistence_is_structured_and_sanitized(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class SyntheticRateLimitError(RuntimeError):
+        status_code = 429
+
+    secret_response = "synthetic-provider-message"
+    error = RuntimeError(secret_response)
+    error.__cause__ = SyntheticRateLimitError(secret_response)
+
+    result = graph_module._record_provider_failure(
+        {"limitations": ["Retained for review."]},
+        stage="policy_analysis",
+        error=error,
+    )
+
+    assert result["provider_failures"] == [
+        {
+            "stage": "policy_analysis",
+            "category": "rate_limited",
+            "status_code": 429,
+        }
+    ]
+    assert secret_response not in str(result)
+    assert secret_response not in caplog.text
+
+
+def test_provider_context_omits_direct_claim_identifiers() -> None:
+    context = graph_module._minimal_claim_context(
+        {
+            "claim_id": "synthetic-id",
+            "claim_number": "synthetic-number",
+            "claim_type": "health",
+            "status": "under_review",
+            "loss_date": "2026-01-02",
+            "summary": "Synthetic narrative containing personal data.",
+        }
+    )
+
+    assert context == {
+        "claim_type": "health",
+        "status": "under_review",
+        "loss_date": "2026-01-02",
+    }
 
 
 def test_inaccessible_claim_returns_safe_error(monkeypatch) -> None:
@@ -332,6 +440,11 @@ def test_policy_retrieval_failure_does_not_create_unsupported_result(
     )
     monkeypatch.setattr(
         graph_module,
+        "has_applicable_policy_documents",
+        MagicMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        graph_module,
         "search_policy_chunks",
         policy_retrieval,
     )
@@ -354,12 +467,17 @@ def test_policy_retrieval_failure_does_not_create_unsupported_result(
         min_similarity=0.20,
     )
 
-    assert output["error"] == (
-        "Policy evidence retrieval is temporarily unavailable."
-    )
+    assert output["error"] is None
     assert output["claim_facts"] == facts
     assert output["policy_evidence"] == []
-    assert output["result"] is None
+    assert output["policy_retrieval_status"] == "unavailable"
+    assert output["result"] is not None
+    assert output["result"]["human_review_required"] is True
+    assert any(
+        "Policy evidence retrieval is temporarily unavailable"
+        in item
+        for item in output["result"]["limitations"]
+    )
 
 
 def test_policy_document_access_denied_returns_safe_error(
@@ -384,6 +502,11 @@ def test_policy_document_access_denied_returns_safe_error(
     )
     monkeypatch.setattr(
         graph_module,
+        "has_applicable_policy_documents",
+        MagicMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        graph_module,
         "search_policy_chunks",
         MagicMock(
             side_effect=PolicyDocumentAccessDeniedError(
@@ -399,7 +522,14 @@ def test_policy_document_access_denied_returns_safe_error(
         task="Investigate this claim.",
     )
 
-    assert output["error"] == "Policy document access denied."
-    assert output["claim_facts"] is None
+    assert output["error"] is None
+    assert output["claim_facts"] == facts
     assert output["policy_evidence"] == []
-    assert output["result"] is None
+    assert output["policy_retrieval_status"] == "access_denied"
+    assert output["result"] is not None
+    assert output["result"]["human_review_required"] is True
+    assert any(
+        "Policy evidence access was denied"
+        in item
+        for item in output["result"]["limitations"]
+    )

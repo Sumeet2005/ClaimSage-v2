@@ -17,6 +17,8 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Add nullable embedding metadata to existing policy chunks."""
 
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+
     op.add_column(
         "policy_chunks",
         sa.Column(
