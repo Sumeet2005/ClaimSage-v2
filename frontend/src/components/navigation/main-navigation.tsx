@@ -30,7 +30,7 @@ function NavigationLink({
     <NavLink
       aria-label={collapsed ? item.label : undefined}
       className={linkClass}
-      end={item.href === '/'}
+      end={item.href === '/dashboard' || item.href === '/'}
       onClick={onNavigate}
       title={collapsed ? item.label : undefined}
       to={item.href}

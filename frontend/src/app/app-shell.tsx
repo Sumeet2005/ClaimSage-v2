@@ -82,7 +82,7 @@ function Sidebar({
           aria-label="ClaimSage dashboard"
           className="flex min-w-0 items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ivory-50"
           onClick={onNavigate}
-          to="/"
+          to="/dashboard"
         >
           <BrandMark />
           {(!collapsed || mobile) && (

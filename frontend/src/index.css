@@ -23,6 +23,14 @@
   --color-emerald-light: var(--emerald-light);
   --color-champagne: var(--champagne);
   --color-champagne-light: var(--champagne-light);
+
+  --color-forest: var(--forest);
+  --color-forest-dark: var(--forest-dark);
+  --color-forest-light: var(--forest-light);
+  --color-sage-light: var(--sage-light);
+  --color-accent-beige: var(--accent-beige);
+  --color-border-beige: var(--border-beige);
+  --color-success-sage: var(--success-sage);
 }
 
 :root {
@@ -52,7 +60,20 @@
   --champagne: #b79b6a;
   --champagne-light: #eee6d6;
 
+  /* Premium Forest Green and Warm Ivory Tokens */
+  --forest: #183F32;
+  --forest-dark: #122E25;
+  --forest-light: #245744;
+  --sage-light: #DDE9DF;
+  --accent-beige: #EDE7D9;
+  --border-beige: #E9E5DB;
+  --success-sage: #DCEADF;
+
   background: var(--ivory-50);
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 * {

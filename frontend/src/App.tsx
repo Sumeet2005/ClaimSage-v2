@@ -4,7 +4,6 @@ import { ArrowUpRight } from 'lucide-react'
 import {
   BrowserRouter,
   Link,
-  Navigate,
   Route,
   Routes,
   useParams,
@@ -16,6 +15,12 @@ import { Card } from '@/components/ui/card'
 import { queryClient } from '@/lib/query-client'
 import { AuthProvider } from '@/features/auth/auth-provider'
 import { ProtectedRoute } from '@/features/auth/protected-route'
+
+const LandingPage = lazy(() =>
+  import('@/features/landing/landing-page').then((module) => ({
+    default: module.LandingPage,
+  })),
+)
 
 const DashboardPage = lazy(() =>
   import('@/features/dashboard/dashboard-page').then((module) => ({
@@ -155,7 +160,7 @@ function WorkspaceSectionPage() {
         </p>
         <Link
           className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-dark transition-colors hover:text-emerald focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald"
-          to="/"
+          to="/dashboard"
         >
           Return to dashboard
           <ArrowUpRight aria-hidden="true" className="size-3.5" />
@@ -171,6 +176,17 @@ function App() {
       <BrowserRouter>
         <AuthProvider>
           <Routes>
+            {/* Public Landing Page at root */}
+            <Route
+              path="/"
+              element={
+                <Suspense fallback={<PageLoading />}>
+                  <LandingPage />
+                </Suspense>
+              }
+            />
+
+            {/* Public Login Route */}
             <Route
               path="login"
               element={
@@ -179,6 +195,8 @@ function App() {
                 </Suspense>
               }
             />
+
+            {/* Authenticated Workspace Routes */}
             <Route element={<ProtectedRoute />}>
               <Route
                 element={
@@ -188,14 +206,13 @@ function App() {
                 }
               >
                 <Route
-                  index
+                  path="dashboard"
                   element={
                     <Suspense fallback={<PageLoading />}>
                       <DashboardPage />
                     </Suspense>
                   }
                 />
-                <Route path="dashboard" element={<Navigate to="/" replace />} />
                 <Route
                   path="claims"
                   element={

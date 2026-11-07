@@ -65,7 +65,7 @@ export function LoginPage() {
   })
 
   if (status === 'authenticated') {
-    return <Navigate replace to={from || '/'} />
+    return <Navigate replace to={from || '/dashboard'} />
   }
 
   const onSubmit = async (values: LoginFormValues) => {

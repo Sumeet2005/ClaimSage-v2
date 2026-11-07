@@ -19,7 +19,7 @@ export interface NavigationItem {
 }
 
 export const navigationItems: NavigationItem[] = [
-  { label: 'Dashboard', href: '/', icon: LayoutDashboard, group: 'workspace' },
+  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, group: 'workspace' },
   {
     label: 'Claims',
     href: '/claims',
