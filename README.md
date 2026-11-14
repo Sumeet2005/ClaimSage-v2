@@ -1,4 +1,4 @@
-# ClaimSage â€” AI Insurance Employee Assistant
+# ClaimSage — AI Insurance Employee Assistant
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -31,7 +31,7 @@ ClaimSage addresses this by transforming unstructured claim files and policy doc
 4. [Technical Architecture Overview](#4-technical-architecture-overview)
 5. [System Architecture Diagram](#5-system-architecture-diagram)
 6. [End-to-End Claim Investigation Workflow](#6-end-to-end-claim-investigation-workflow)
-7. [RAG Architecture â€” Ingestion & Contextual Retrieval](#7-rag-architecture--ingestion--contextual-retrieval)
+7. [RAG Architecture — Ingestion & Contextual Retrieval](#7-rag-architecture--ingestion--contextual-retrieval)
 8. [LangGraph Multi-Agent Architecture](#8-langgraph-multi-agent-architecture)
 9. [LangChain vs LangGraph vs RAG](#9-langchain-vs-langgraph-vs-rag)
 10. [Human-in-the-Loop and Responsible AI](#10-human-in-the-loop-and-responsible-ai)
@@ -50,7 +50,7 @@ ClaimSage addresses this by transforming unstructured claim files and policy doc
 ## 1. Project Overview
 
 ### Operational Challenge in Claims Processing
-When a policyholder submits a health insurance reimbursement claimâ€”for example, a three-day inpatient hospitalization for an emergency laparoscopic appendectomyâ€”an employee must verify several evidence-dependent questions before any decision can be made:
+When a policyholder submits a health insurance reimbursement claim—for example, a three-day inpatient hospitalization for an emergency laparoscopic appendectomy—an employee must verify several evidence-dependent questions before any decision can be made:
 1. **Document Completeness**: Were both the hospital discharge summary and the itemized hospital bill submitted, and are all pages readable?
 2. **Factual & Timeline Consistency**: Do the admission and discharge dates on the hospital bill match the discharge summary and the reported loss date on the claim?
 3. **Policy Applicability & Sub-Limits**: Was the policy version active on the loss date? Does inpatient hospitalization coverage apply ($\ge 24$ hours), and do daily room-rent charges (e.g., INR 4,500/day) comply with the policy's room-rent sub-limit (e.g., INR 5,000/day)?
@@ -158,7 +158,7 @@ The user interface is a **React 19 + TypeScript** single-page application served
 Rather than maintaining a separate external vector database, ClaimSage stores its 21 relational tables (`claims`, `policy_documents`, `policy_clauses`, `investigation_runs`, `audit_events`) alongside `Vector(384)` embeddings (`claim_evidence_chunks`, `policy_chunks`) inside a single **PostgreSQL 16** instance. This design allows retrieval queries to join RBAC filters, claim tenancy (`ClaimEvidenceDocument.claim_id == claim_id`), and policy effective-date applicability (`effective_from <= loss_date <= effective_to`) **within the same SQL transaction** as `pgvector` `cosine_distance` ranking, eliminating cross-store consistency drift. Raw PDF binaries are stored separately in **MinIO** (`claimsage-documents` bucket) and verified via SHA-256 checksums on upload and download.
 
 ### 3. Asynchronous Durable Worker Queue
-Multi-agent LLM investigations require multiple sequential model calls and take 15â€“90 seconds to complete. Executing them inside an HTTP request thread would cause gateway timeouts and lost work on transient failures. Instead:
+Multi-agent LLM investigations require multiple sequential model calls and take 15–90 seconds to complete. Executing them inside an HTTP request thread would cause gateway timeouts and lost work on transient failures. Instead:
 - FastAPI enqueues an `InvestigationRun` record with `status="running"` and `current_stage="queued"`.
 - A standalone Python worker (`claimsage-worker`) polls PostgreSQL using `SELECT ... FOR UPDATE SKIP LOCKED`, acquires a 120-second lease (`lease_expires_at`), and spawns a daemon heartbeat thread (`_HeartbeatRunner`) that renews the lease every 40 seconds.
 - After each LangGraph node completes, `save_progress()` checks optimistic worker fencing (`WorkerFencedError`) and checkpoints `current_stage` and `state_snapshot` (JSONB) to PostgreSQL so interrupted runs can resume without re-running completed stages.
@@ -283,7 +283,7 @@ flowchart TD
 
 ---
 
-## 7. RAG Architecture â€” Ingestion & Contextual Retrieval
+## 7. RAG Architecture — Ingestion & Contextual Retrieval
 
 > **Overview of RAG in ClaimSage**
 > *Retrieval-Augmented Generation (RAG) enables the specialist agents to retrieve relevant passages from claim evidence and policy documents before generating their outputs. This grounds the analysis in verifiable source documents rather than relying on the LLM's parametric memory.*
@@ -406,7 +406,7 @@ A clear architectural distinction exists between **RAG**, **LangChain**, and **L
 | **LangGraph** | A **stateful workflow orchestration framework** built on directed graphs (`StateGraph`, nodes, conditional edges, streaming state updates) for coordinating multi-step and multi-agent execution. | **Core multi-agent orchestrator (`backend/src/claimsage/agents/graph.py`)**. ClaimSage uses LangGraph's `StateGraph(InvestigationState, context_schema=InvestigationContext)` to wire the 9 investigation nodes, evaluate conditional routing after the Supervisor and each specialist, stream per-node progress snapshots to the PostgreSQL worker, and support mid-workflow resumption. |
 
 > [!NOTE]
-> **Orchestration Rationale â€” Why use LangGraph instead of a linear pipeline or basic LangChain chain?**
+> **Orchestration Rationale — Why use LangGraph instead of a linear pipeline or basic LangChain chain?**
 > In a claim investigation, not every specialist applies to every claim (for example, `repair_estimate_analyst` applies only to motor claims with an uploaded estimate, and `policy_analyst` depends on whether an applicable policy version exists). Furthermore, individual cloud LLM stages can fail or encounter rate limits mid-run. **LangGraph** provides explicit typed state (`InvestigationState`), conditional edge routing (`route_after_*`), and per-node state streaming (`graph.stream(..., stream_mode="updates")`), allowing the background worker to checkpoint progress to PostgreSQL after every specialist node and resume or degrade gracefully without losing earlier completed analyses.
 
 ---
@@ -484,11 +484,11 @@ No standalone application UI screenshots are currently committed to the reposito
 ### Planned Screenshot Gallery
 To populate a visual gallery in this section, capture the following views from `http://localhost:8080` and save them under `docs/screenshots/`:
 
-1. `docs/screenshots/01-dashboard.png` â€” **Employee Dashboard (`/dashboard`)** showing active claims metrics, quick actions, and recent audit activity.
-2. `docs/screenshots/02-claim-workspace.png` â€” **Claim Details (`/claims/7797d65d-23e2-4705-8d3a-4036244d77e3`)** showing synthetic health claim `CLM-DEMO-HEALTH-001` (*Rohan Varma*), linked policy `DEMO-HEALTH-SECURE-2026-V3`, and uploaded PDF evidence.
-3. `docs/screenshots/03-investigation-report.png` â€” **Investigation Report (`/investigations/28e9d1ee-e7a4-4b9b-a5de-0ac0b82e88fb`)** showing the mandatory human-review banner, specialist coverage status, observed facts, and verbatim source citations.
-4. `docs/screenshots/04-policy-clauses.png` â€” **Health Policy Document & Clauses Tab (`/policies/6b9da497-4411-4467-872a-3316e2a7350f`)** showing the 13 extracted policy clauses, 8 coverages, and 10 exclusions.
-5. `docs/screenshots/05-email-sandbox.png` â€” **Email Follow-ups Sandbox (`/email-follow-ups`)** showing the *Safe Sandbox Active* banner and sandboxed notification records.
+1. `docs/screenshots/01-dashboard.png` — **Employee Dashboard (`/dashboard`)** showing active claims metrics, quick actions, and recent audit activity.
+2. `docs/screenshots/02-claim-workspace.png` — **Claim Details (`/claims/7797d65d-23e2-4705-8d3a-4036244d77e3`)** showing synthetic health claim `CLM-DEMO-HEALTH-001` (*Rohan Varma*), linked policy `DEMO-HEALTH-SECURE-2026-V3`, and uploaded PDF evidence.
+3. `docs/screenshots/03-investigation-report.png` — **Investigation Report (`/investigations/28e9d1ee-e7a4-4b9b-a5de-0ac0b82e88fb`)** showing the mandatory human-review banner, specialist coverage status, observed facts, and verbatim source citations.
+4. `docs/screenshots/04-policy-clauses.png` — **Health Policy Document & Clauses Tab (`/policies/6b9da497-4411-4467-872a-3316e2a7350f`)** showing the 13 extracted policy clauses, 8 coverages, and 10 exclusions.
+5. `docs/screenshots/05-email-sandbox.png` — **Email Follow-ups Sandbox (`/email-follow-ups`)** showing the *Safe Sandbox Active* banner and sandboxed notification records.
 
 ---
 
@@ -496,46 +496,46 @@ To populate a visual gallery in this section, capture the following views from `
 
 ```text
 ClaimSage-v2-clean/
-â”œâ”€â”€ .env.example                        # Safe environment variable template (no real secrets)
-â”œâ”€â”€ CONTRIBUTING.md                     # Developer contribution & pull request guidelines
-â”œâ”€â”€ docker-compose.yml                  # 6-service Docker orchestration (db, minio, migrate, backend, worker, frontend)
-â”œâ”€â”€ README.md                           # Root project documentation
-â”œâ”€â”€ backend/
-â”‚   â”œâ”€â”€ Dockerfile                      # Python 3.12 container image for backend, migrate & worker
-â”‚   â”œâ”€â”€ pyproject.toml                  # Python dependencies, Ruff linter & Pytest configuration
-â”‚   â”œâ”€â”€ alembic.ini                     # Alembic database migration configuration
-â”‚   â”œâ”€â”€ scripts/                        # Operational & demo seeding scripts (seed_demo.py, set_demo_passwords.py, run_investigation_worker.py)
-â”‚   â”œâ”€â”€ src/claimsage/
-â”‚   â”‚   â”œâ”€â”€ main.py                     # FastAPI app initialization, middleware & /health endpoints
-â”‚   â”‚   â”œâ”€â”€ agents/                     # LangGraph workflow (graph.py, state.py), 6 specialists, LLM failover (llm.py) & TokenBudgetManager
-â”‚   â”‚   â”œâ”€â”€ api/routes/                 # FastAPI REST routers (auth, claims, evidence, policies, agent, investigations, customer_emails, audit, system)
-â”‚   â”‚   â”œâ”€â”€ core/                       # Settings (config.py), correlation-ID observability, rate limiting & upload limits
-â”‚   â”‚   â”œâ”€â”€ db/                         # SQLAlchemy 2.0 ORM models (21 tables in models.py) & session factory
-â”‚   â”‚   â”œâ”€â”€ rag/                        # PDF extraction (document_loader.py), OCR (ocr_service.py), embeddings (embedding_service.py) & two-pass retrieval
-â”‚   â”‚   â”œâ”€â”€ schemas/                    # Pydantic v2 request/response contracts
-â”‚   â”‚   â”œâ”€â”€ services/                   # Domain services (auth, claim/document RBAC, persistence, human_review, notifications, MinIO storage, audit)
-â”‚   â”‚   â”œâ”€â”€ tools/                      # Authorized claim lookup tool (claim_tools.py)
-â”‚   â”‚   â””â”€â”€ workers/                    # Durable PostgreSQL worker (investigation_worker.py) with SKIP LOCKED leases & heartbeats
-â”‚   â””â”€â”€ tests/                          # Automated backend test suite (814 tests)
-â”œâ”€â”€ frontend/
-â”‚   â”œâ”€â”€ Dockerfile                      # Multi-stage Node build + Nginx 1.27 Alpine runtime image
-â”‚   â”œâ”€â”€ nginx.conf                      # SPA routing & /api + /health reverse-proxy configuration
-â”‚   â”œâ”€â”€ package.json                    # React 19, TypeScript 5.9, Vite 8, Tailwind v4 & TanStack Query dependencies
-â”‚   â””â”€â”€ src/
-â”‚       â”œâ”€â”€ app/                        # Authenticated application shell & layout
-â”‚       â”œâ”€â”€ components/                 # Reusable UI primitives & navigation sidebar
-â”‚       â”œâ”€â”€ features/                   # Domain modules (landing, auth, dashboard, claims, investigations, policies, documents, communications, audit, settings)
-â”‚       â”œâ”€â”€ lib/                        # Axios API client (in-memory JWT) & React Query client
-â”‚       â””â”€â”€ types/                      # TypeScript interfaces matching backend Pydantic schemas
-â””â”€â”€ docs/
-    â”œâ”€â”€ ARCHITECTURE.md                 # Detailed system & database architecture blueprint
-    â”œâ”€â”€ AGENT_WORKFLOW.md               # Specialist agent contracts & LangGraph routing guide
-    â”œâ”€â”€ API_GUIDE.md                    # REST endpoint reference
-    â”œâ”€â”€ DEMO_GUIDE.md                   # Step-by-step live demonstration script
-    â”œâ”€â”€ PROJECT_REPORT.md               # Comprehensive project engineering report
-    â”œâ”€â”€ SECURITY.md                     # Threat model, RBAC matrix & security controls
-    â”œâ”€â”€ TESTING.md                      # Test suite execution & verification guide
-    â””â”€â”€ policies/                       # Synthetic Health (v3) and Motor (v1) PDF policy documents
+|-- .env.example                        # Safe environment variable template (no real secrets)
+|-- CONTRIBUTING.md                     # Developer contribution & pull request guidelines
+|-- docker-compose.yml                  # 6-service Docker orchestration (db, minio, migrate, backend, worker, frontend)
+|-- README.md                           # Root project documentation
+|-- backend/
+|   |-- Dockerfile                      # Python 3.12 container image for backend, migrate & worker
+|   |-- pyproject.toml                  # Python dependencies, Ruff linter & Pytest configuration
+|   |-- alembic.ini                     # Alembic database migration configuration
+|   |-- scripts/                        # Operational & demo seeding scripts (seed_demo.py, set_demo_passwords.py, run_investigation_worker.py)
+|   |-- src/claimsage/
+|   |   |-- main.py                     # FastAPI app initialization, middleware & /health endpoints
+|   |   |-- agents/                     # LangGraph workflow (graph.py, state.py), 6 specialists, LLM failover (llm.py) & TokenBudgetManager
+|   |   |-- api/routes/                 # FastAPI REST routers (auth, claims, evidence, policies, agent, investigations, customer_emails, audit, system)
+|   |   |-- core/                       # Settings (config.py), correlation-ID observability, rate limiting & upload limits
+|   |   |-- db/                         # SQLAlchemy 2.0 ORM models (21 tables in models.py) & session factory
+|   |   |-- rag/                        # PDF extraction (document_loader.py), OCR (ocr_service.py), embeddings (embedding_service.py) & two-pass retrieval
+|   |   |-- schemas/                    # Pydantic v2 request/response contracts
+|   |   |-- services/                   # Domain services (auth, claim/document RBAC, persistence, human_review, notifications, MinIO storage, audit)
+|   |   |-- tools/                      # Authorized claim lookup tool (claim_tools.py)
+|   |   +-- workers/                    # Durable PostgreSQL worker (investigation_worker.py) with SKIP LOCKED leases & heartbeats
+|   +-- tests/                          # Automated backend test suite (814 tests)
+|-- frontend/
+|   |-- Dockerfile                      # Multi-stage Node build + Nginx 1.27 Alpine runtime image
+|   |-- nginx.conf                      # SPA routing & /api + /health reverse-proxy configuration
+|   |-- package.json                    # React 19, TypeScript 5.9, Vite 8, Tailwind v4 & TanStack Query dependencies
+|   +-- src/
+|       |-- app/                        # Authenticated application shell & layout
+|       |-- components/                 # Reusable UI primitives & navigation sidebar
+|       |-- features/                   # Domain modules (landing, auth, dashboard, claims, investigations, policies, documents, communications, audit, settings)
+|       |-- lib/                        # Axios API client (in-memory JWT) & React Query client
+|       +-- types/                      # TypeScript interfaces matching backend Pydantic schemas
++-- docs/
+    |-- ARCHITECTURE.md                 # Detailed system & database architecture blueprint
+    |-- AGENT_WORKFLOW.md               # Specialist agent contracts & LangGraph routing guide
+    |-- API_GUIDE.md                    # REST endpoint reference
+    |-- DEMO_GUIDE.md                   # Step-by-step live demonstration script
+    |-- PROJECT_REPORT.md               # Comprehensive project engineering report
+    |-- SECURITY.md                     # Threat model, RBAC matrix & security controls
+    |-- TESTING.md                      # Test suite execution & verification guide
+    +-- policies/                       # Synthetic Health (v3) and Motor (v1) PDF policy documents
 ```
 
 ---
@@ -629,7 +629,7 @@ This walkthrough uses the pre-seeded **synthetic health insurance claim** verifi
 ### Step-by-Step Walkthrough
 
 1. **Login (`/login`)**: Sign in at `http://localhost:8080/login` as Claims Adjuster `alex.adjuster@claimsage.local` using the password configured via `set_demo_passwords.py`.
-2. **Dashboard (`/dashboard`)**: Inspect the employee role badge (*Alex Morgan â€” Claims Adjuster*), active claim metrics, quick navigation cards, and live audit activity feed.
+2. **Dashboard (`/dashboard`)**: Inspect the employee role badge (*Alex Morgan — Claims Adjuster*), active claim metrics, quick navigation cards, and live audit activity feed.
 3. **Claims Workspace (`/claims`)**: View the claims table containing the 5 synthetic health and motor claims (`CLM-DEMO-HEALTH-001` through `003` and `CLM-DEMO-MOTOR-001` through `002`) with status and policy badges.
 4. **Claim Details (`CLM-DEMO-HEALTH-001`)**: Open `CLM-DEMO-HEALTH-001` to inspect the structured claim header (`status: under_review`, linked policy `DEMO-HEALTH-SECURE-2026-V3`, loss date, and claim narrative).
 5. **Evidence Document (`/documents`)**: Locate the uploaded PDF `claimsage_synthetic_health_evidence_rohan_varma.pdf` (`Storage Ready` in MinIO, `4` embedded chunks) and click **Download** to verify SHA-256-checked PDF streaming from MinIO.
@@ -686,7 +686,7 @@ npm run build
 The following operational and architectural boundaries apply to the current implementation:
 
 ### 1. External LLM Provider & Free-Tier Rate Limits
-- **Groq Free-Tier TPM Quotas**: Free-tier Groq Cloud accounts enforce strict rolling tokens-per-minute limits. To prevent mid-investigation `429 Too Many Requests` failures, `graph.py` applies a configurable pacing delay (`GROQ_PACING_DELAY_SECONDS=16.0` in `.env.example`, or 20â€“28s stage defaults in `_apply_pacing_delay`) between cloud specialist calls outside `APP_ENV=test`.
+- **Groq Free-Tier TPM Quotas**: Free-tier Groq Cloud accounts enforce strict rolling tokens-per-minute limits. To prevent mid-investigation `429 Too Many Requests` failures, `graph.py` applies a configurable pacing delay (`GROQ_PACING_DELAY_SECONDS=16.0` in `.env.example`, or 20–28s stage defaults in `_apply_pacing_delay`) between cloud specialist calls outside `APP_ENV=test`.
 - **Google Gemini Preview Capacity Spikes**: While `ReviewReportExtraction` and all specialist schemas are 100% compatible with the Google GenAI SDK (`_sanitize_gemini_json_schema`), the configured `gemini-3.8-flash` preview model on Google AI Studio Free Tier can experience upstream `503 UNAVAILABLE` or `504 DEADLINE_EXCEEDED` spikes under high demand. When both Groq and Gemini fail on the report stage, ClaimSage degrades gracefully to `build_fallback_partial_report`.
 
 ### 2. Retrieval & Document Scope Limitations
@@ -716,7 +716,7 @@ The following enhancements are planned next steps and are **not** claimed as cur
 ## 19. Author & Supporting Documentation
 
 - **Author**: Sumeet (`@Sumeet2005`)
-- **Project**: ClaimSage â€” AI Insurance Employee Assistant
+- **Project**: ClaimSage — AI Insurance Employee Assistant
 - **Repository**: [https://github.com/Sumeet2005/ClaimSage-v2](https://github.com/Sumeet2005/ClaimSage-v2)
 - **Supporting Documentation**:
   - [System Architecture (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)
