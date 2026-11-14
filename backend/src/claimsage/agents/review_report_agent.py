@@ -1,5 +1,6 @@
 """Evidence-grounded synthesis of completed ClaimSage specialist analyses."""
 
+from collections.abc import Mapping
 import json
 import logging
 import re
@@ -556,7 +557,27 @@ def _coverage(
             ReviewReportSpecialistCoverage(
                 specialist=specialist_name,
                 status=specialist.status,
-                analysis_included=specialist.status == "completed",
+                analysis_included=specialist.status == "completed"
+                or (
+                    specialist.status == "insufficient_evidence"
+                    and specialist.analysis is not None
+                    and (
+                        bool(getattr(specialist.analysis, "factual_findings", None))
+                        or bool(getattr(specialist.analysis, "findings", None))
+                        or bool(getattr(specialist.analysis, "summary", None))
+                        or (
+                            isinstance(specialist.analysis, Mapping)
+                            and (
+                                bool(specialist.analysis.get("factual_findings"))
+                                or bool(specialist.analysis.get("findings"))
+                                or bool(specialist.analysis.get("anomalies"))
+                                or bool(specialist.analysis.get("relevant_clauses"))
+                                or bool(specialist.analysis.get("extracted_fields"))
+                                or bool(specialist.analysis.get("summary"))
+                            )
+                        )
+                    )
+                ),
                 limitations=limitations,
             )
         )
@@ -595,7 +616,7 @@ def _overall_status(report_input: ReviewReportInput) -> str:
         return "incomplete"
     if any(
         getattr(report_input, name).status
-        in {"insufficient_evidence", "unavailable", "failed", "pending"}
+        in {"unavailable", "failed", "pending"}
         for name in _SPECIALISTS
     ):
         return "incomplete"
@@ -1236,7 +1257,8 @@ def _build_output(
     completed_specialists = {
         name
         for name in _SPECIALISTS
-        if getattr(report_input, name).status == "completed"
+        if getattr(report_input, name).status in {"completed", "insufficient_evidence"}
+        and getattr(report_input, name).analysis is not None
     }
     output_groups: dict[str, list[ReviewReportItem]] = {
         "observed_facts": [],
@@ -1574,7 +1596,8 @@ def _canonicalize_live_extraction(
     completed_specialists = {
         name
         for name in _SPECIALISTS
-        if getattr(report_input, name).status == "completed"
+        if getattr(report_input, name).status in {"completed", "insufficient_evidence"}
+        and getattr(report_input, name).analysis is not None
     }
 
     # Build catalog of valid (specialist, output_path, finding_text) from report_input

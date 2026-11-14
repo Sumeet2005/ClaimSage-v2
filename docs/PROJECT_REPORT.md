@@ -30,7 +30,7 @@
 ---
 
 ## 1. Abstract
-ClaimSage is an enterprise-grade artificial intelligence investigation copilot designed for insurance claims adjusters, policy specialists, and supervisory teams. Built upon an asynchronous LangGraph multi-agent architecture and a Contextual Hybrid Retrieval-Augmented Generation (RAG) pipeline, ClaimSage automates the labor-intensive synthesis of medical records, billing statements, police reports, and complex policy terms. By enforcing deterministic pre-invocation token budgeting, bidirectional evidence reconciliation, verbatim quote validation, and strict decision boundaries, ClaimSage ensures zero autonomous coverage adjudications while accelerating investigation throughput and preserving complete auditability.
+ClaimSage is an enterprise-grade artificial intelligence investigation copilot designed for insurance claims adjusters, policy specialists, and supervisory teams. Built upon an asynchronous LangGraph multi-agent architecture and a Two-Pass Contextual Dense Retrieval-Augmented Generation (RAG) pipeline, ClaimSage automates the labor-intensive synthesis of medical records, billing statements, police reports, and complex policy terms. By enforcing deterministic pre-invocation token budgeting (`TokenBudgetManager`), bidirectional evidence reconciliation, verbatim quote validation, and strict decision boundaries, ClaimSage ensures zero autonomous coverage adjudications while accelerating investigation throughput and preserving complete auditability.
 
 ---
 
@@ -89,7 +89,7 @@ flowchart LR
     Frontend["Frontend\nReact 19, TypeScript, Vite 8\nTailwind CSS v4, TanStack Query"] --- Proxy["Nginx Reverse Proxy\nAlpine Linux (:8080)"]
     Proxy --- Backend["Backend API\nFastAPI 0.115+, Python 3.12\nPydantic v2, SQLAlchemy 2.0"]
     Backend --- Worker["Async Worker\nPostgreSQL Advisory Leases\nLangGraph Multi-Agent Engine"]
-    Worker --- DB[("PostgreSQL 16 + pgvector\nDense Vectors & tsvector FTS")]
+    Worker --- DB[("PostgreSQL 16 + pgvector\n384-dim Dense Cosine Vectors")]
     Worker --- Storage[("MinIO S3\nSHA-256 Verified Storage")]
     Worker --- Cloud["LLM Services\nPrimary: Groq (gpt-oss-120b)\nFallback: Google Gemini"]
 ```
@@ -155,19 +155,15 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    Doc["Uploaded Document (PDF / Text)"] --> Extract["Native / OCR Extraction"]
-    Extract --> Chunk["Chunking (500 chars / 100 overlap)"]
+    Doc["Uploaded Document (PDF)"] --> Extract["PyMuPDF Native / Tesseract OCR Extraction"]
+    Extract --> Chunk["Chunking (1,000 chars / 150 overlap)"]
     Chunk --> Embed["Local Dense Embedding\nall-MiniLM-L6-v2 (384-dim)"]
-    Chunk --> FTS["PostgreSQL tsvector\nLexical Inverted Index"]
-    Embed --> VDB[("pgvector Index\nCosine Similarity")]
-    FTS --> GIN[("PostgreSQL GIN Index\nts_rank_cd")]
+    Embed --> VDB[("PostgreSQL 16 + pgvector\nVector(384) Cosine Distance")]
     
-    Query["Agent Information Need"] --> DenseSearch["Dense Cosine Search"]
-    Query --> LexSearch["Sparse Text Search"]
-    DenseSearch --> RRF["Reciprocal Rank Fusion (RRF)\nScore = 1/(60+Rank_d) + 1/(60+Rank_s)"]
-    LexSearch --> RRF
-    RRF --> Filter["Claim/Policy Authorization Filter"]
-    Filter --> Context["Retrieved Canonical Chunks"]
+    Query["Agent Information Need"] --> Filter["Claim/Policy RBAC & Effective-Date Filter"]
+    Filter --> Pass1["Pass 1: pgvector Cosine Similarity\n(Broad Candidate Recall)"]
+    Pass1 --> Pass2["Pass 2: Per-Document Diversity Cap\n& SHA-256 Deduplication"]
+    Pass2 --> Context["TokenBudgetManager Compaction\n& Canonical Reading Order"]
 ```
 
 ---

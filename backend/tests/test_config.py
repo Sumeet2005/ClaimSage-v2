@@ -112,7 +112,7 @@ def test_gemini_settings_defaults_and_env_override(
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     default_settings = Settings(_env_file=None)
     assert default_settings.gemini_api_key is None
-    assert default_settings.gemini_model == "gemini-2.5-flash"
+    assert default_settings.gemini_model == "gemini-3.8-flash"
 
     monkeypatch.setenv("GEMINI_API_KEY", "synthetic-gemini-key-not-real")
     monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash-lite")

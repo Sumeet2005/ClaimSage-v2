@@ -761,7 +761,7 @@ export function PolicyDetailPage() {
                               <CheckCircle2 className="size-3" />
                               Verified
                             </span>
-                          ) : (
+                          ) : isAdmin ? (
                             <Button
                               size="sm"
                               variant="outline"
@@ -775,6 +775,10 @@ export function PolicyDetailPage() {
                             >
                               Verify Clause
                             </Button>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] capitalize">
+                              {clause.verification_status.replace('_', ' ')}
+                            </Badge>
                           )}
                         </div>
                       </div>

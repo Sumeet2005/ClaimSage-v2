@@ -1,10 +1,30 @@
 """Structured output schemas for ClaimSage specialist agents."""
 
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def _strip_additional_properties(schema: dict[str, Any]) -> None:
+    """Remove additionalProperties from generated JSON schemas for Gemini API compatibility
+    while preserving strict extra='forbid' Pydantic runtime validation.
+    """
+    schema.pop("additionalProperties", None)
+    for value in list(schema.values()):
+        if isinstance(value, dict):
+            _strip_additional_properties(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    _strip_additional_properties(item)
+
+
+_STRICT_SCHEMA_CONFIG = ConfigDict(
+    extra="forbid",
+    json_schema_extra=_strip_additional_properties,
+)
 
 
 class PolicyEvidenceQuote(BaseModel):
@@ -628,7 +648,7 @@ class ReportSourceInventoryItem(BaseModel):
 class ReviewReportEvidenceQuote(BaseModel):
     """Verbatim excerpt required to support a report evidence citation."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT_SCHEMA_CONFIG
 
     evidence_id: str = Field(min_length=1)
     quote: str = Field(min_length=8)
@@ -637,7 +657,7 @@ class ReviewReportEvidenceQuote(BaseModel):
 class ReviewReportItemExtraction(BaseModel):
     """Untrusted model-generated report item without source metadata."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT_SCHEMA_CONFIG
 
     statement: str = Field(min_length=1)
     explanation: str = Field(min_length=1)
@@ -657,7 +677,7 @@ class ReviewReportItemExtraction(BaseModel):
 class ReviewReportAnalystOutputReference(BaseModel):
     """Exact JSON Pointer to a textual finding in a specialist output."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT_SCHEMA_CONFIG
 
     specialist: ReviewReportSpecialistName
     output_path: str = Field(min_length=2)
@@ -667,7 +687,7 @@ class ReviewReportAnalystOutputReference(BaseModel):
 class ReviewReportConflictAssertionExtraction(BaseModel):
     """One source-faithful assertion in a proposed report conflict."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT_SCHEMA_CONFIG
 
     assertion: str = Field(min_length=1)
     subject: str = Field(min_length=1)
@@ -681,7 +701,7 @@ class ReviewReportConflictAssertionExtraction(BaseModel):
 class ReviewReportExtraction(BaseModel):
     """Model-produced report content; coverage and provenance are application-owned."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT_SCHEMA_CONFIG
 
     observed_facts: list[ReviewReportItemExtraction] = Field(
         default_factory=list
@@ -699,7 +719,7 @@ class ReviewReportExtraction(BaseModel):
 class ReviewReportSourceReference(BaseModel):
     """Evidence provenance resolved only from the canonical input snapshot."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT_SCHEMA_CONFIG
 
     evidence_id: str
     document_id: str
@@ -710,7 +730,7 @@ class ReviewReportSourceReference(BaseModel):
 class ReviewReportItem(BaseModel):
     """Auditable report item with separate evidence and analyst references."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT_SCHEMA_CONFIG
 
     statement: str
     explanation: str
@@ -739,7 +759,7 @@ class ReviewReportItem(BaseModel):
 class ReviewReportConflictAssertion(BaseModel):
     """A distinct assertion with its canonical evidence or analyst reference."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT_SCHEMA_CONFIG
 
     assertion: str
     subject: str
@@ -752,7 +772,7 @@ class ReviewReportConflictAssertion(BaseModel):
 class ReviewReportSpecialistCoverage(BaseModel):
     """Execution coverage for one specialist, kept separate from findings."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT_SCHEMA_CONFIG
 
     specialist: ReviewReportSpecialistName
     status: ReviewReportSpecialistStatus
@@ -763,7 +783,7 @@ class ReviewReportSpecialistCoverage(BaseModel):
 class ReviewReportOutput(BaseModel):
     """Structured investigation report for human review, never a claim decision."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT_SCHEMA_CONFIG
 
     overall_status: Literal[
         "completed",

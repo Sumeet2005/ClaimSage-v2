@@ -395,9 +395,9 @@ def investigate(
                 runtime.context["session"],
                 employee_id=employee_id,
                 claim_id=claim_id,
-                query=state["task"],
-                top_k=5,
-                min_similarity=0.20,
+                query=f"{state['task']} hospitalization inpatient medical expenses surgical procedures room rent ICU sub-limits waiting periods exclusions benefit schedule",
+                top_k=15,
+                min_similarity=0.15,
             )
 
             policy_evidence = [
@@ -879,7 +879,7 @@ def run_evidence_analyst(
         return {}
 
     if (
-        state.get("evidence_analysis_status") == "completed"
+        state.get("evidence_analysis_status") in {"completed", "insufficient_evidence"}
         and isinstance(state.get("evidence_analysis"), dict)
     ):
         return {}
@@ -1014,11 +1014,12 @@ def run_policy_analyst(
         return {}
 
     try:
-        if state["policy_evidence"]:
+        policy_ev = list(state.get("policy_evidence") or [])
+        if policy_ev:
             _apply_pacing_delay("policy_analyst")
         analysis = analyze_policy(
             task=state["task"],
-            policy_evidence=state["policy_evidence"],
+            policy_evidence=policy_ev,
             claim_evidence=state.get("claim_evidence"),
             evidence_analysis=state.get("evidence_analysis"),
         )
@@ -1034,6 +1035,7 @@ def run_policy_analyst(
             state,
             {
                 **state["result"],
+                "policy_evidence": policy_ev,
                 "policy_analysis": analysis_data,
                 "policy_analysis_status": analysis_status,
                 "ai_analysis_status": analysis_status,
@@ -1045,8 +1047,8 @@ def run_policy_analyst(
             diagnostic={
                 "agent_name": "policy_analyst",
                 "retrieval_strategy": "policy_analyst_contextual",
-                "candidate_passages": len(state.get("policy_evidence") or []),
-                "selected_passages": len(state.get("policy_evidence") or []),
+                "candidate_passages": len(policy_ev),
+                "selected_passages": len(policy_ev),
                 "status": analysis_status,
             },
         )
@@ -1060,6 +1062,7 @@ def run_policy_analyst(
         return _reconcile_state_update(
             state,
             {
+                "policy_evidence": policy_ev,
                 "policy_analysis": analysis_data,
                 "policy_analysis_status": analysis_status,
                 "ai_analysis_status": analysis_status,
@@ -1851,6 +1854,10 @@ def run_review_report(
     ):
         return {}
 
+    reconciled_updates = reconcile_specialist_missing_in_state(state)
+    if reconciled_updates:
+        state = {**state, **reconciled_updates}  # type: ignore[assignment]
+
     failure_stage = "input_build"
     try:
         report_input = _build_review_report_input(state)
@@ -1972,6 +1979,7 @@ def run_review_report(
         "review_report": report,
         "review_report_status": report_status,
         "result": updated_result,
+        **{k: v for k, v in reconciled_updates.items() if k != "result"},
     }
 
 
@@ -2460,6 +2468,7 @@ def run_investigation(
             "unavailable",
             "failed",
             "pending",
+            "incomplete",
             None,
         }:
             initial_state["review_report"] = None

@@ -76,7 +76,7 @@ services:
       GROQ_MAX_OUTPUT_TOKENS: ${GROQ_MAX_OUTPUT_TOKENS:-4096}
       GROQ_TIMEOUT_SECONDS: ${GROQ_TIMEOUT_SECONDS:-60.0}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       APP_ENV: ${APP_ENV:-development}
       EMAIL_BACKEND: ${EMAIL_BACKEND:-sandbox}
       EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-claimsage-noreply@example.invalid}
@@ -121,7 +121,7 @@ services:
       GROQ_MAX_OUTPUT_TOKENS: ${GROQ_MAX_OUTPUT_TOKENS:-4096}
       GROQ_TIMEOUT_SECONDS: ${GROQ_TIMEOUT_SECONDS:-60.0}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       APP_ENV: ${APP_ENV:-development}
       EMAIL_BACKEND: ${EMAIL_BACKEND:-sandbox}
       EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-claimsage-noreply@example.invalid}

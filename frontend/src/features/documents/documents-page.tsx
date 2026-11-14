@@ -16,10 +16,12 @@ import {
   Search,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { PageContainer } from '@/components/layout/page-container'
+import { apiClient } from '@/lib/api-client'
 import {
   formatBytes,
   getClaimEvidenceDocuments,
@@ -54,16 +56,31 @@ export function DocumentsPage() {
   const processedDocuments = documents.filter((d) => d.status === 'processed').length
   const totalChunks = documents.reduce((acc, d) => acc + d.chunk_count, 0)
 
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
+
   const handleDownload = async (doc: ClaimEvidenceDocumentItem) => {
-    const url = `/api/v1/claims/${doc.claim_id}/evidence/${doc.id}/download`
-    const link = document.createElement('a')
-    link.href = url
-    link.target = '_blank'
-    link.rel = 'noreferrer'
-    link.download = doc.filename
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+    try {
+      setDownloadingId(doc.id)
+      const response = await apiClient.get<Blob>(
+        `/claims/${encodeURIComponent(doc.claim_id)}/evidence/${encodeURIComponent(doc.id)}/download`,
+        { responseType: 'blob' },
+      )
+      const blobUrl = window.URL.createObjectURL(
+        new Blob([response.data], { type: doc.mime_type || 'application/pdf' }),
+      )
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = doc.filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(blobUrl)
+      toast.success(`Downloaded ${doc.filename}`)
+    } catch {
+      toast.error('Failed to download document. Please check your permissions.')
+    } finally {
+      setDownloadingId(null)
+    }
   }
 
   return (
@@ -300,12 +317,22 @@ export function DocumentsPage() {
                     </span>
                     <Button
                       className="h-8 gap-1.5 text-xs text-emerald-800 hover:bg-emerald-50"
+                      disabled={downloadingId === doc.id}
                       size="sm"
                       variant="ghost"
                       onClick={() => handleDownload(doc)}
                     >
-                      <Download className="size-3.5" />
-                      Download
+                      {downloadingId === doc.id ? (
+                        <>
+                          <LoaderCircle className="size-3.5 animate-spin" />
+                          Downloading…
+                        </>
+                      ) : (
+                        <>
+                          <Download className="size-3.5" />
+                          Download
+                        </>
+                      )}
                     </Button>
                   </div>
                 </CardContent>

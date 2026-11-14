@@ -865,3 +865,109 @@ def test_complete_investigation_with_groq_429_and_gemini_fallback_vs_both_failin
     assert state_both_fail["review_report"].overall_status == "incomplete"
     assert state_both_fail["result"]["stage_diagnostics"]["intake_analysis"]["fallback_provider"] == "gemini"
     assert state_both_fail["result"]["stage_diagnostics"]["intake_analysis"]["fallback_model_attempted"] == "gemini-2.5-flash"
+
+
+def test_review_report_extraction_schema_is_gemini_compatible_and_preserves_strict_validation() -> None:
+    """Verify ReviewReportExtraction emits no additionalProperties in Gemini responseSchema
+    while still strictly rejecting extra fields or invalid model output at validation time.
+    """
+    import json
+    from google.genai import _transformers
+    from pydantic import ConfigDict, ValidationError
+    from claimsage.agents.schemas import (
+        ReviewReportAnalystOutputReference,
+        ReviewReportConflictAssertionExtraction,
+        ReviewReportEvidenceQuote,
+        ReviewReportExtraction,
+        ReviewReportItemExtraction,
+    )
+
+    # 1. Verify JSON schema and Google GenAI t_schema contain no additionalProperties
+    raw_json_schema = ReviewReportExtraction.model_json_schema()
+    assert "additionalProperties" not in json.dumps(raw_json_schema)
+
+    gemini_schema = _transformers.t_schema(None, ReviewReportExtraction)
+    dumped_gemini_schema = gemini_schema.model_dump(exclude_none=True, by_alias=True)
+    serialized_gemini_schema = json.dumps(dumped_gemini_schema)
+    assert "additionalProperties" not in serialized_gemini_schema
+    assert "additional_properties" not in serialized_gemini_schema
+
+    # 2. Verify strict runtime Pydantic validation (extra='forbid') is preserved on all nested models
+    with pytest.raises(ValidationError):
+        ReviewReportExtraction.model_validate({"unexpected_top_field": []})
+
+    with pytest.raises(ValidationError):
+        ReviewReportItemExtraction.model_validate(
+            {
+                "statement": "Valid statement",
+                "explanation": "Valid explanation",
+                "unexpected_item_field": "forbidden",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ReviewReportEvidenceQuote.model_validate(
+            {
+                "evidence_id": "chunk-1",
+                "quote": "Verbatim quote text here",
+                "extra_key": "forbidden",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ReviewReportAnalystOutputReference.model_validate(
+            {
+                "specialist": "intake",
+                "output_path": "/summary",
+                "finding_text": "Summary text",
+                "extra_key": "forbidden",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ReviewReportConflictAssertionExtraction.model_validate(
+            {
+                "assertion": "Conflict",
+                "subject": "Bill",
+                "attribute": "Amount",
+                "value": "100",
+                "extra_key": "forbidden",
+            }
+        )
+
+    # 3. Verify GeminiStructuredRunnable rejects invalid/extra fields returned by model
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.parsed = None
+    mock_response.function_calls = None
+    mock_response.text = json.dumps(
+        {
+            "observed_facts": [],
+            "hallucinated_extra_field": ["should fail strict validation"],
+        }
+    )
+    mock_client.models.generate_content.return_value = mock_response
+
+    runnable = llm.GeminiStructuredRunnable(
+        client=mock_client,
+        model="gemini-2.5-flash",
+        output_schema=ReviewReportExtraction,
+    )
+    with pytest.raises(llm.GeminiStructuredOutputError):
+        runnable.invoke("Synthesize report")
+
+    # 4. Verify ad-hoc extra='forbid' BaseModel also has additionalProperties sanitized
+    class _AdHocStrictSchema(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        title: str
+
+    mock_response.text = json.dumps({"title": "Valid"})
+    adhoc_runnable = llm.GeminiStructuredRunnable(
+        client=mock_client,
+        model="gemini-2.5-flash",
+        output_schema=_AdHocStrictSchema,
+    )
+    res = adhoc_runnable.invoke("Test adhoc")
+    assert res.title == "Valid"
+    sent_config = mock_client.models.generate_content.call_args.kwargs["config"]
+    assert "additionalProperties" not in json.dumps(sent_config.response_schema)

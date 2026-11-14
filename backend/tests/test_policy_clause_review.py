@@ -7,14 +7,23 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from claimsage.api.routes.policies import review_policy_clause
+from claimsage.api.routes.policies import (
+    list_policy_clauses,
+    list_policy_document_clauses,
+    review_policy_clause,
+)
 from claimsage.db.models import (
     AuditEvent,
     Employee,
     EmployeeRole,
     PolicyClause,
+    PolicyDocument,
 )
 from claimsage.schemas.policies import PolicyClauseVerificationRequest
+from claimsage.services.policy_admin import (
+    PolicyAccessDeniedError,
+    get_policy_clauses,
+)
 
 
 def _review_fixture():
@@ -108,3 +117,124 @@ def test_claims_adjuster_cannot_verify_policy_clause():
     assert exc_info.value.status_code == 403
     session.scalar.assert_not_called()
     session.commit.assert_not_called()
+
+
+def test_admin_and_policy_specialist_can_read_policy_clauses():
+    document_id, clause, specialist, session = _review_fixture()
+    doc = PolicyDocument(id=document_id, filename="policy.pdf", checksum_sha256="abc")
+    session.get.return_value = doc
+    session.scalars.return_value.all.return_value = [clause]
+
+    res_specialist = list_policy_clauses(
+        policy_id=document_id,
+        employee=specialist,
+        session=session,
+    )
+    assert len(res_specialist) == 1
+    assert res_specialist[0].id == clause.id
+
+    admin = Employee(
+        id=uuid4(),
+        email="admin@example.test",
+        display_name="Admin User",
+        role=EmployeeRole.ADMIN,
+    )
+    res_admin = list_policy_document_clauses(
+        document_id=document_id,
+        employee=admin,
+        session=session,
+    )
+    assert len(res_admin) == 1
+    assert res_admin[0].clause_identifier == "source-page-1-chunk-0"
+
+
+def test_authorized_claims_adjuster_can_read_policy_clauses():
+    document_id, clause, _, session = _review_fixture()
+    doc = PolicyDocument(id=document_id, filename="policy.pdf", checksum_sha256="abc")
+    session.get.return_value = doc
+
+    adjuster = Employee(
+        id=uuid4(),
+        email="alex.adjuster@claimsage.local",
+        display_name="Alex Adjuster",
+        role=EmployeeRole.CLAIMS_ADJUSTER,
+        team_id="health-claims",
+    )
+
+    scalars_first = MagicMock()
+    scalars_first.all.return_value = [document_id]
+    scalars_second = MagicMock()
+    scalars_second.all.return_value = [clause]
+    session.scalars.side_effect = [scalars_first, scalars_second, scalars_first, scalars_second]
+
+    res_by_policy = list_policy_clauses(
+        policy_id=document_id,
+        employee=adjuster,
+        session=session,
+    )
+    assert len(res_by_policy) == 1
+    assert res_by_policy[0].id == clause.id
+
+    res_by_doc = list_policy_document_clauses(
+        document_id=document_id,
+        employee=adjuster,
+        session=session,
+    )
+    assert len(res_by_doc) == 1
+    assert res_by_doc[0].id == clause.id
+
+
+def test_unauthorized_claims_adjuster_cannot_read_ungranted_policy_clauses():
+    document_id, _, _, session = _review_fixture()
+    doc = PolicyDocument(id=document_id, filename="policy.pdf", checksum_sha256="abc")
+    session.get.return_value = doc
+    session.scalars.return_value.all.return_value = []  # No policy access grants
+
+    adjuster = Employee(
+        id=uuid4(),
+        email="other.adjuster@claimsage.local",
+        display_name="Other Adjuster",
+        role=EmployeeRole.CLAIMS_ADJUSTER,
+        team_id="motor-claims",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        list_policy_clauses(
+            policy_id=document_id,
+            employee=adjuster,
+            session=session,
+        )
+    assert exc_info.value.status_code == 403
+
+    with pytest.raises(HTTPException) as exc_doc_info:
+        list_policy_document_clauses(
+            document_id=document_id,
+            employee=adjuster,
+            session=session,
+        )
+    assert exc_doc_info.value.status_code == 403
+
+
+def test_unauthorized_role_cannot_read_policy_clauses():
+    document_id, _, _, session = _review_fixture()
+    doc = PolicyDocument(id=document_id, filename="policy.pdf", checksum_sha256="abc")
+    session.get.return_value = doc
+
+    team_lead = Employee(
+        id=uuid4(),
+        email="lead@claimsage.local",
+        display_name="Team Lead",
+        role=EmployeeRole.TEAM_LEAD,
+        team_id="health-claims",
+    )
+
+    with pytest.raises(PolicyAccessDeniedError):
+        get_policy_clauses(session, team_lead, document_id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        list_policy_clauses(
+            policy_id=document_id,
+            employee=team_lead,
+            session=session,
+        )
+    assert exc_info.value.status_code == 403

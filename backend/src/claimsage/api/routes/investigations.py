@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from claimsage.api.dependencies import get_current_employee
@@ -277,13 +277,15 @@ def list_investigation_notifications(
         employee=employee,
         investigation_id=investigation_id,
     )
-    deliveries = session.scalars(
-        select(NotificationDelivery)
-        .where(
-            NotificationDelivery.resource_id == str(investigation.id),
-            NotificationDelivery.recipient_employee_id == employee.id,
+    delivery_stmt = select(NotificationDelivery).where(
+        NotificationDelivery.resource_id == str(investigation.id)
+    )
+    if employee.role != EmployeeRole.ADMIN:
+        delivery_stmt = delivery_stmt.where(
+            NotificationDelivery.recipient_employee_id == employee.id
         )
-        .order_by(NotificationDelivery.created_at.desc())
+    deliveries = session.scalars(
+        delivery_stmt.order_by(NotificationDelivery.created_at.desc())
     ).all()
 
     items: list[NotificationDeliveryResponse] = [
@@ -391,8 +393,16 @@ def submit_investigation_review(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=msg,
         ) from None
-    except SQLAlchemyError:
+    except IntegrityError as exc:
         session.rollback()
+        logger.warning("Integrity error during review submission: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The review submission violates database integrity constraints.",
+        ) from None
+    except SQLAlchemyError as exc:
+        session.rollback()
+        logger.error("Database error during review submission: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Investigation review could not be saved.",

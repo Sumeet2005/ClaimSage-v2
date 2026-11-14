@@ -155,9 +155,13 @@ def test_authorized_claim_returns_structured_investigation(
         session,
         employee_id=employee_id,
         claim_id=claim_id,
-        query=task,
-        top_k=5,
-        min_similarity=0.20,
+        query=(
+            f"{task} hospitalization inpatient medical expenses surgical "
+            "procedures room rent ICU sub-limits waiting periods exclusions "
+            "benefit schedule"
+        ),
+        top_k=15,
+        min_similarity=0.15,
     )
 
     assert output["error"] is None
@@ -462,9 +466,13 @@ def test_policy_retrieval_failure_does_not_create_unsupported_result(
         session,
         employee_id=employee_id,
         claim_id=claim_id,
-        query="Investigate this claim.",
-        top_k=5,
-        min_similarity=0.20,
+        query=(
+            "Investigate this claim. hospitalization inpatient medical "
+            "expenses surgical procedures room rent ICU sub-limits waiting "
+            "periods exclusions benefit schedule"
+        ),
+        top_k=15,
+        min_similarity=0.15,
     )
 
     assert output["error"] is None

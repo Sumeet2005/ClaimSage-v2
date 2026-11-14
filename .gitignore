@@ -11,9 +11,13 @@
 *.sql
 *.sql.gz
 *.bak
+*.old
+*.backup
 backups/
 tmp/
 scratch/
+*.tmp
+*.temp
 
 # Logs and local debug outputs
 *.log

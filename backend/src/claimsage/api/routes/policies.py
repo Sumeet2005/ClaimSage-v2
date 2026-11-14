@@ -49,6 +49,7 @@ from claimsage.services.policy_admin import (
     add_policy_exclusion,
     create_policy_record,
     get_policy_claims,
+    get_policy_clauses,
     get_policy_detail,
     link_policy_to_claim,
     list_policies,
@@ -667,27 +668,20 @@ def list_policy_document_clauses(
     employee: Employee = Depends(get_current_employee),
     session: Session = Depends(get_db),
 ) -> list[PolicyClauseResponse]:
-    """List source clauses for authorized policy administrators to review."""
+    """List source clauses for an authorized policy document (read-only)."""
 
-    require_access_management_permission(employee)
-    if session.get(PolicyDocument, document_id) is None:
+    try:
+        return get_policy_clauses(session, employee, document_id)
+    except PolicyNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Policy document not found.",
         )
-    clauses = session.scalars(
-        select(PolicyClause)
-        .where(PolicyClause.document_id == document_id)
-        .order_by(
-            PolicyClause.source_page_number,
-            PolicyClause.clause_identifier,
-            PolicyClause.id,
+    except PolicyAccessDeniedError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied.",
         )
-    ).all()
-    return [
-        PolicyClauseResponse.model_validate(clause)
-        for clause in clauses
-    ]
 
 
 @router.delete(
@@ -847,6 +841,21 @@ def list_policy_claims(
     """Retrieve claims associated with this policy version."""
     try:
         return get_policy_claims(session, employee, policy_id)
+    except PolicyNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found.")
+    except PolicyAccessDeniedError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
+
+
+@router.get("/{policy_id}/clauses", response_model=list[PolicyClauseResponse])
+def list_policy_clauses(
+    policy_id: UUID,
+    employee: Employee = Depends(get_current_employee),
+    session: Session = Depends(get_db),
+) -> list[PolicyClauseResponse]:
+    """Retrieve source clauses for an authorized policy version (read-only)."""
+    try:
+        return get_policy_clauses(session, employee, policy_id)
     except PolicyNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found.")
     except PolicyAccessDeniedError:

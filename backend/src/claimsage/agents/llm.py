@@ -448,7 +448,7 @@ def _resolve_fallback_target(
 ) -> tuple[str, str, object] | None:
     """Resolve the active fallback provider, model name, and model instance if configured."""
     if _has_gemini_fallback(settings):
-        gemini_model = (getattr(settings, "gemini_model", None) or "gemini-2.5-flash").strip()
+        gemini_model = (getattr(settings, "gemini_model", None) or "gemini-3.8-flash").strip()
         gemini_chat = get_gemini_chat_model()
         if gemini_chat is not None:
             return ("gemini", gemini_model, gemini_chat)
@@ -900,6 +900,24 @@ def _format_gemini_messages(
     return system_instruction, contents
 
 
+def _sanitize_gemini_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Recursively remove additionalProperties keys rejected by the Gemini API."""
+    cleaned: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key == "additionalProperties":
+            continue
+        if isinstance(value, dict):
+            cleaned[key] = _sanitize_gemini_json_schema(value)
+        elif isinstance(value, list):
+            cleaned[key] = [
+                _sanitize_gemini_json_schema(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            cleaned[key] = value
+    return cleaned
+
+
 class GeminiStructuredRunnable:
     """Structured-output and function-calling runnable backed by the official Google GenAI SDK."""
 
@@ -928,11 +946,17 @@ class GeminiStructuredRunnable:
         config: dict[str, Any] | None = None,
     ) -> BaseModel:
         system_instruction, contents = _format_gemini_messages(input)
+        raw_schema = self.output_schema.model_json_schema()
+        response_schema: Any = (
+            _sanitize_gemini_json_schema(raw_schema)
+            if "additionalProperties" in json.dumps(raw_schema)
+            else self.output_schema
+        )
         config_kwargs: dict[str, Any] = {
             "temperature": self.temperature,
             "max_output_tokens": self.max_tokens,
             "response_mime_type": "application/json",
-            "response_schema": self.output_schema,
+            "response_schema": response_schema,
         }
         if system_instruction:
             config_kwargs["system_instruction"] = system_instruction
@@ -1055,7 +1079,7 @@ class GeminiToolRunnable:
                     genai_types.FunctionDeclaration(
                         name=tool.__name__,
                         description=tool.__doc__ or f"Structured tool for {tool.__name__}",
-                        parameters=tool.model_json_schema(),
+                        parameters=_sanitize_gemini_json_schema(tool.model_json_schema()),
                     )
                 )
 
@@ -1189,7 +1213,7 @@ def get_gemini_chat_model() -> GeminiChatModel | None:
     if not api_key:
         return None
 
-    gemini_model = (getattr(settings, "gemini_model", None) or "gemini-2.5-flash").strip()
+    gemini_model = (getattr(settings, "gemini_model", None) or "gemini-3.8-flash").strip()
     if not gemini_model:
         return None
 

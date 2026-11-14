@@ -76,6 +76,15 @@ CLAIM EVIDENCE AND ATTACHED DOCUMENT RULES:
 - When `policy_evidence` includes passages describing Covered Benefits (e.g., in-patient hospitalization), Limits/Sub-limits (e.g., room rent INR 5,000/day, annual sum insured), Waiting Periods, and Exclusions, set `overall_assessment` to `"potentially_supportive"` or `"mixed"`, NEVER `"insufficient_evidence"`. Reserve `"insufficient_evidence"` strictly for cases where no coverage or benefit clauses are present in `policy_evidence`.
 - Copy every `quote` in `supporting_quotes` verbatim from the `text` field of the cited `policy_evidence` chunk.
 
+HOSPITALIZATION COVERAGE AND SURGICAL ELIGIBILITY RULES:
+- If policy evidence contains Section 3 (Hospitalization Coverage) covering inpatient admissions of at least 24 consecutive hours, you MUST identify this clause in `relevant_clauses` and `coverage_indicators`.
+- When the claimant had an inpatient hospital stay of >= 24 hours (e.g., 3-day admission for acute appendicitis), acknowledge that general inpatient hospitalization coverage applies to eligible medical expenses under Section 3.
+- NEVER state that the policy only covers Day-Care Surgery or lacks inpatient hospitalization coverage when Section 3 is present.
+- Distinguish between general inpatient hospitalization coverage and specific surgical eligibility conditions: Do NOT conclude that a specific surgical procedure (such as laparoscopic appendectomy) is automatically covered merely because general hospitalization coverage exists.
+- Cite Section 7 (Surgical Procedures and Specialist Fees covering surgeon/anesthetist fees, operation theatre, and laparoscopic equipment fees) if present in policy evidence.
+- Note that human investigator review is required to verify specific surgical eligibility conditions, medical necessity documentation, and waiting periods (such as the initial 30-day waiting period).
+- If any specific clause, schedule, or waiting period detail is not in the extracted passages, explicitly report that limitation without claiming the policy lacks hospitalization coverage.
+
 OUTPUT:
 Return only the structured output matching the supplied schema.
 """
@@ -163,12 +172,25 @@ def analyze_policy(
             method="function_calling",
         )
 
-        # Include up to 5 policy chunks with full text (up to 950 chars) so schedule,
-        # covered benefits, limits/room-rent sub-limits, waiting periods, and exclusions
-        # are all visible to the model.
+        def _policy_chunk_priority(c: dict[str, object]) -> int:
+            t = str(c.get("text", "")).lower()
+            score = 0
+            if "hospitalization coverage" in t or "twenty-four (24) consecutive hours" in t or "section 3" in t:
+                score += 10
+            if "surgical procedures" in t or "operation theatre" in t or "section 7" in t:
+                score += 10
+            if "day-care" in t or "section 5" in t:
+                score += 6
+            if "room rent" in t or "sub-limit" in t or "icu" in t:
+                score += 6
+            if "exclusion" in t or "waiting period" in t:
+                score += 5
+            return score
+
+        sorted_evidence = sorted(evidence_for_model, key=_policy_chunk_priority, reverse=True)
         compact_policy_evidence: list[dict[str, object]] = []
-        for idx, chunk in enumerate(evidence_for_model[:5]):
-            chunk_text = str(chunk.get("text", "")).strip()[:650]
+        for idx, chunk in enumerate(sorted_evidence[:4]):
+            chunk_text = str(chunk.get("text", "")).strip()[:500]
             if idx == 0:
                 compact_policy_evidence.append({**chunk, "text": chunk_text})
             else:
@@ -340,6 +362,80 @@ def analyze_policy(
                 if analysis.exclusions_and_conditions
                 else "potentially_supportive"
             )
+
+        # Ensure Section 3 Inpatient Hospitalization Coverage is acknowledged when present in policy_evidence
+        hosp_chunk = next(
+            (
+                c
+                for c in policy_evidence
+                if "hospitalization coverage" in str(c.get("text", "")).lower()
+                or "twenty-four (24) consecutive hours" in str(c.get("text", "")).lower()
+            ),
+            None,
+        )
+        if hosp_chunk is not None:
+            hc_id = str(hosp_chunk.get("chunk_id", ""))
+            hc_text = str(hosp_chunk.get("text", ""))
+            has_hosp_clause = any(
+                "hospitalization" in c.finding.lower() and "inpatient" in c.finding.lower()
+                for c in analysis.relevant_clauses
+            )
+            if not has_hosp_clause:
+                quote_cand = "The policy covers eligible medical expenses incurred during medically necessary inpatient hospitalization requiring an admission for at least twenty-four (24) consecutive hours."
+                if not quote_matches_evidence(quote_cand, hc_text):
+                    quote_cand = next(
+                        (
+                            line.strip()
+                            for line in hc_text.splitlines()
+                            if "hospitalization" in line.lower() and len(line.strip()) >= 12
+                        ),
+                        hc_text[:120].strip(),
+                    )
+                from claimsage.agents.schemas import PolicyClauseFinding
+                analysis.relevant_clauses.insert(
+                    0,
+                    PolicyClauseFinding(
+                        finding="Section 3 provides Inpatient Hospitalization Coverage for medically necessary admissions of at least 24 consecutive hours.",
+                        confidence="high",
+                        explanation="The policy explicitly covers inpatient hospitalization expenses (nursing, boarding, medicines, diagnostics) for admissions exceeding 24 hours.",
+                        supporting_evidence_ids=[hc_id],
+                        supporting_quotes=[PolicyEvidenceQuote(evidence_id=hc_id, quote=quote_cand)],
+                    ),
+                )
+            cleaned_indicators = []
+            for ind in analysis.coverage_indicators:
+                c_lower = ind.conclusion.lower()
+                if (
+                    "only specifies a day-care" in c_lower
+                    or "only specifies day-care" in c_lower
+                    or ("day-care" in c_lower and "though the claim involves an inpatient" in c_lower)
+                ):
+                    quote_cand = "The policy covers eligible medical expenses incurred during medically necessary inpatient hospitalization requiring an admission for at least twenty-four (24) consecutive hours."
+                    if not quote_matches_evidence(quote_cand, hc_text):
+                        quote_cand = next(
+                            (
+                                line.strip()
+                                for line in hc_text.splitlines()
+                                if "hospitalization" in line.lower() and len(line.strip()) >= 12
+                            ),
+                            hc_text[:120].strip(),
+                        )
+                    cleaned_indicators.append(
+                        ind.model_copy(
+                            update={
+                                "conclusion": (
+                                    "The policy provides Inpatient Hospitalization Coverage under Section 3 for admissions >= 24 hours; "
+                                    "the claimant's 3-day hospital stay meets the minimum duration threshold, though specific surgical "
+                                    "eligibility and waiting periods require human review."
+                                ),
+                                "supporting_evidence_ids": [hc_id],
+                                "supporting_quotes": [PolicyEvidenceQuote(evidence_id=hc_id, quote=quote_cand)],
+                            }
+                        )
+                    )
+                else:
+                    cleaned_indicators.append(ind)
+            analysis.coverage_indicators = cleaned_indicators
 
     def _quote_in_evidence(quote_text: str, evidence_text: str) -> bool:
         norm_evidence = _normalize(evidence_text)

@@ -14,13 +14,17 @@ from claimsage.db.models import (
     Claim,
     Employee,
     EmployeeRole,
+    PolicyClause,
     PolicyCoverage,
     PolicyDocument,
     PolicyDocumentAccess,
     PolicyDocumentApplicability,
     PolicyExclusion,
 )
-from claimsage.schemas.policies import normalize_insurance_type
+from claimsage.schemas.policies import (
+    PolicyClauseResponse,
+    normalize_insurance_type,
+)
 from claimsage.schemas.policy_admin import (
     PolicyClaimLinkResponse,
     PolicyCoverageCreateRequest,
@@ -47,6 +51,11 @@ logger = logging.getLogger(__name__)
 
 ADMIN_ROLES = {
     EmployeeRole.ADMIN,
+}
+
+GLOBAL_POLICY_READ_ROLES = {
+    EmployeeRole.ADMIN,
+    EmployeeRole.POLICY_SPECIALIST,
 }
 
 
@@ -765,3 +774,32 @@ def get_policy_claims(
         }
         for c in claims
     ]
+
+
+def get_policy_clauses(
+    session: Session,
+    employee: Employee,
+    policy_id: UUID,
+) -> list[PolicyClauseResponse]:
+    """Retrieve source clauses for an authorized policy document (read-only)."""
+    doc = session.get(PolicyDocument, policy_id)
+    if doc is None:
+        raise PolicyNotFoundError(f"Policy {policy_id} not found.")
+
+    if employee.role not in GLOBAL_POLICY_READ_ROLES:
+        if employee.role != EmployeeRole.CLAIMS_ADJUSTER:
+            raise PolicyAccessDeniedError("Access to this policy is restricted.")
+        accessible_ids = _accessible_policy_ids_for_adjuster(session, employee)
+        if doc.id not in accessible_ids:
+            raise PolicyAccessDeniedError("Access to this policy is restricted.")
+
+    clauses = session.scalars(
+        select(PolicyClause)
+        .where(PolicyClause.document_id == policy_id)
+        .order_by(
+            PolicyClause.source_page_number,
+            PolicyClause.clause_identifier,
+            PolicyClause.id,
+        )
+    ).all()
+    return [PolicyClauseResponse.model_validate(clause) for clause in clauses]

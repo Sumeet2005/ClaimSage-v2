@@ -32,6 +32,22 @@ class InvestigationReviewRequest(BaseModel):
         cleaned = value.strip()
         return cleaned if cleaned else None
 
+    @field_validator("escalate_reason")
+    @classmethod
+    def sanitize_escalate_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned if cleaned else None
+
+    @field_validator("requested_documents")
+    @classmethod
+    def sanitize_requested_documents(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        cleaned = [d.strip() for d in value if d and d.strip()]
+        return cleaned if cleaned else None
+
 
 class InvestigationReviewResponse(BaseModel):
     """Response representing an attributed human review decision."""

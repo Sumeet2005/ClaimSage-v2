@@ -72,6 +72,35 @@ def record_human_review(
     ):
         raise HumanReviewError("Investigation is already approved.")
 
+    # Validate mandatory rationale requirements for specific decisions
+    review_notes = request.notes
+    if not review_notes and request.escalate_reason:
+        review_notes = request.escalate_reason.strip()
+
+    if request.decision == "escalated":
+        effective_notes = (review_notes or "").strip()
+        if len(effective_notes) < 5:
+            raise HumanReviewError(
+                "A mandatory rationale of at least 5 characters is required when escalating an investigation."
+            )
+
+    elif request.decision == "returned_for_investigation":
+        effective_notes = (review_notes or "").strip()
+        if len(effective_notes) < 5:
+            raise HumanReviewError(
+                "A mandatory rationale of at least 5 characters is required when returning an investigation for analysis."
+            )
+
+    elif request.decision == "needs_additional_documents":
+        requested_docs = [
+            d.strip() for d in (request.requested_documents or []) if d and d.strip()
+        ]
+        effective_notes = (review_notes or "").strip()
+        if not requested_docs and len(effective_notes) < 5:
+            raise HumanReviewError(
+                "Specific requested documents or a mandatory explanation of at least 5 characters is required."
+            )
+
     # 4. Process review decision and trigger state transitions
     email_draft: CustomerEmail | None = None
     action_type = f"investigation_review_{request.decision}"
@@ -85,7 +114,9 @@ def record_human_review(
         action_type = "investigation_additional_documents_requested"
 
         # Generate a customer email draft with secure upload link (strictly DRAFTED)
-        requested_docs = request.requested_documents or []
+        requested_docs = [
+            d.strip() for d in (request.requested_documents or []) if d and d.strip()
+        ]
         email_draft = create_email_draft(
             session,
             claim=claim,
@@ -94,7 +125,7 @@ def record_human_review(
             recipient_email=claim.claim_number.lower() + "@policyholder.example.com",
             recipient_name=claim.claimant_name or "Policyholder",
             requested_documents=requested_docs,
-            custom_notes=request.notes,
+            custom_notes=review_notes,
             created_by_employee=employee,
         )
 
@@ -121,7 +152,7 @@ def record_human_review(
         investigation_id=investigation.id,
         reviewer_employee_id=employee.id,
         decision=request.decision,
-        notes=request.notes,
+        notes=review_notes,
     )
     session.add(review)
 
@@ -140,7 +171,7 @@ def record_human_review(
             resource_id=str(investigation.id),
             details=(
                 f"Human review decision '{request.decision}' recorded by {employee.display_name}. "
-                f"Notes: {request.notes or 'None'}"
+                f"Notes: {review_notes or 'None'}"
             ),
             event_metadata={
                 "decision": request.decision,

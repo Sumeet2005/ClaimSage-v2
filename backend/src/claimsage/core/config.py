@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     groq_model: str = "openai/gpt-oss-120b"
     groq_fallback_model: str | None = Field(default=None)
     gemini_api_key: SecretStr | None = Field(default=None, repr=False)
-    gemini_model: str = Field(default="gemini-2.5-flash", min_length=1)
+    gemini_model: str = Field(default="gemini-3.8-flash", min_length=1)
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     groq_timeout_seconds: float = Field(default=60.0, gt=0.0, le=300.0)
     groq_max_input_tokens: int = Field(default=24000, ge=1000, le=100000)

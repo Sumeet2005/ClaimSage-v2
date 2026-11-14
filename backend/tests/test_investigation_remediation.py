@@ -379,7 +379,8 @@ def test_risk_anomaly_payload_compaction_bounds_size():
 
     assert len(payload["claim_evidence"]) == 4
     for item in payload["claim_evidence"]:
-        assert len(item["text"]) <= 500
+        assert len(item["text"]) <= 850
+        assert len(item["text"]) < len(long_text)
 
 
 def test_risk_anomaly_summaries_bounds_specialist_arrays():

@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from claimsage.db.models import (
@@ -422,11 +422,22 @@ def _retrieved_sources(state: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         for chunk in chunks:
             if not isinstance(chunk, dict):
                 continue
+            serialized_chunk = _to_json_value(chunk)
             chunk_id = chunk.get("chunk_id")
             if isinstance(chunk_id, str):
                 sources[chunk_id] = {
-                    **_to_json_value(chunk),
+                    **serialized_chunk,
                     "source_kind": source_kind,
+                }
+            clause_id = chunk.get("clause_id")
+            if (
+                source_kind == "policy_chunk"
+                and isinstance(clause_id, str)
+                and clause_id not in sources
+            ):
+                sources[clause_id] = {
+                    **serialized_chunk,
+                    "source_kind": "policy_clause",
                 }
     return sources
 
@@ -480,20 +491,39 @@ def _add_relational_references(
     if not source_ids:
         return
 
-    claim_chunks = {
-        chunk.chunk_id: chunk.id
-        for chunk in session.scalars(
-            select(ClaimEvidenceChunk).where(
-                ClaimEvidenceChunk.chunk_id.in_(source_ids)
-            )
-        )
-    }
-    policy_chunks = {
-        chunk.chunk_id: chunk.id
-        for chunk in session.scalars(
-            select(PolicyChunk).where(PolicyChunk.chunk_id.in_(source_ids))
-        )
-    }
+    source_uuids: set[UUID] = set()
+    for source_id in source_ids:
+        try:
+            source_uuids.add(UUID(source_id))
+        except ValueError:
+            continue
+
+    claim_chunk_filters = [ClaimEvidenceChunk.chunk_id.in_(source_ids)]
+    if source_uuids:
+        claim_chunk_filters.append(ClaimEvidenceChunk.id.in_(source_uuids))
+
+    claim_chunks: dict[str, UUID] = {}
+    for chunk in session.scalars(
+        select(ClaimEvidenceChunk).where(or_(*claim_chunk_filters))
+    ):
+        if getattr(chunk, "chunk_id", None):
+            claim_chunks[chunk.chunk_id] = chunk.id
+        if getattr(chunk, "id", None) is not None:
+            claim_chunks[str(chunk.id)] = chunk.id
+
+    policy_chunk_filters = [PolicyChunk.chunk_id.in_(source_ids)]
+    if source_uuids:
+        policy_chunk_filters.append(PolicyChunk.id.in_(source_uuids))
+
+    policy_chunks: dict[str, UUID] = {}
+    for chunk in session.scalars(
+        select(PolicyChunk).where(or_(*policy_chunk_filters))
+    ):
+        if getattr(chunk, "chunk_id", None):
+            policy_chunks[chunk.chunk_id] = chunk.id
+        if getattr(chunk, "id", None) is not None:
+            policy_chunks[str(chunk.id)] = chunk.id
+
     clause_ids: dict[str, UUID] = {}
     for source_id in source_ids:
         try:
@@ -514,15 +544,17 @@ def _add_relational_references(
             claim_chunk_id = claim_chunks.get(source_id)
             policy_chunk_id = policy_chunks.get(source_id)
             clause_id = clause_ids.get(source_id)
-            source_kind = (
-                "claim_evidence"
-                if claim_chunk_id is not None
-                else "policy_chunk"
-                if policy_chunk_id is not None
-                else "policy_clause"
-                if clause_id is not None
-                else "unresolved"
-            )
+            if claim_chunk_id is not None:
+                source_kind = "claim_evidence"
+                policy_chunk_id = None
+                clause_id = None
+            elif policy_chunk_id is not None:
+                source_kind = "policy_chunk"
+                clause_id = None
+            elif clause_id is not None:
+                source_kind = "policy_clause"
+            else:
+                source_kind = "unresolved"
             references.append(
                 InvestigationFindingReference(
                     finding_id=finding.id,
